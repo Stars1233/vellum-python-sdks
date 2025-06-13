@@ -794,6 +794,11 @@ export interface VellumSecretWorkflowReference {
   vellumSecretName: string;
 }
 
+export interface EnvironmentVariableWorkflowReference {
+  type: "ENVIRONMENT_VARIABLE";
+  environmentVariable: string;
+}
+
 export interface ExecutionCounterWorkflowReference {
   type: "EXECUTION_COUNTER";
   nodeId: string;
@@ -825,6 +830,7 @@ export type WorkflowValueDescriptorReference =
   | WorkflowStateVariableWorkflowReference
   | ConstantValueWorkflowReference
   | VellumSecretWorkflowReference
+  | EnvironmentVariableWorkflowReference
   | ExecutionCounterWorkflowReference
   | DictionaryWorkflowReference
   | ArrayWorkflowReference;
@@ -880,7 +886,12 @@ export interface AttributeConfig {
 }
 
 export interface FunctionArgs {
-  type: string;
+  type: "CODE_EXECUTION";
   src: string;
   definition: FunctionDefinition;
+}
+
+export interface InlineWorkflowFunctionArgs {
+  type: "INLINE_WORKFLOW";
+  exec_config: WorkflowVersionExecConfig;
 }

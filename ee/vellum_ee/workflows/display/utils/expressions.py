@@ -31,6 +31,7 @@ from vellum.workflows.expressions.or_ import OrExpression
 from vellum.workflows.expressions.parse_json import ParseJsonExpression
 from vellum.workflows.nodes.displayable.bases.utils import primitive_to_vellum_value
 from vellum.workflows.references.constant import ConstantValueReference
+from vellum.workflows.references.environment_variable import EnvironmentVariableReference
 from vellum.workflows.references.execution_count import ExecutionCountReference
 from vellum.workflows.references.lazy import LazyReference
 from vellum.workflows.references.output import OutputReference
@@ -210,7 +211,16 @@ def serialize_value(display_context: "WorkflowDisplayContext", value: Any) -> Js
         return serialize_value(display_context, child_descriptor)
 
     if isinstance(value, WorkflowInputReference):
-        workflow_input_display = display_context.global_workflow_input_displays[value]
+        try:
+            workflow_input_display = display_context.global_workflow_input_displays[value]
+        except KeyError:
+            inputs_class_name = value.inputs_class.__name__
+            workflow_class_name = display_context.workflow_display_class.infer_workflow_class().__name__
+            raise UnsupportedSerializationException(
+                f"Inputs class '{inputs_class_name}' referenced during serialization of '{workflow_class_name}' "
+                f"without parameterizing this Workflow with this Inputs definition. Update your Workflow "
+                f"definition to '{workflow_class_name}(BaseWorkflow[{inputs_class_name}, BaseState])'."
+            )
         return {
             "type": "WORKFLOW_INPUT",
             "input_variable_id": str(workflow_input_display.id),
@@ -237,6 +247,12 @@ def serialize_value(display_context: "WorkflowDisplayContext", value: Any) -> Js
         return {
             "type": "VELLUM_SECRET",
             "vellum_secret_name": value.name,
+        }
+
+    if isinstance(value, EnvironmentVariableReference):
+        return {
+            "type": "ENVIRONMENT_VARIABLE",
+            "environment_variable": value.name,
         }
 
     if isinstance(value, ExecutionCountReference):
