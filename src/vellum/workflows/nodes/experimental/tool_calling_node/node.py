@@ -1,7 +1,5 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any, ClassVar, Dict, List, Optional, cast
-
-from pydash import snake_case
 
 from vellum import ChatMessage, PromptBlock
 from vellum.client.types.code_execution_package import CodeExecutionPackage
@@ -12,11 +10,15 @@ from vellum.workflows.exceptions import NodeException
 from vellum.workflows.graph.graph import Graph
 from vellum.workflows.inputs.base import BaseInputs
 from vellum.workflows.nodes.bases import BaseNode
-from vellum.workflows.nodes.experimental.tool_calling_node.utils import create_function_node, create_tool_router_node
+from vellum.workflows.nodes.experimental.tool_calling_node.utils import (
+    create_function_node,
+    create_tool_router_node,
+    get_function_name,
+)
 from vellum.workflows.outputs.base import BaseOutputs
 from vellum.workflows.state.base import BaseState
 from vellum.workflows.state.context import WorkflowContext
-from vellum.workflows.types.core import EntityInputsInterface
+from vellum.workflows.types.core import EntityInputsInterface, Tool
 from vellum.workflows.workflows.base import BaseWorkflow
 
 
@@ -27,15 +29,14 @@ class ToolCallingNode(BaseNode):
     Attributes:
         ml_model: str - The model to use for tool calling (e.g., "gpt-4o-mini")
         blocks: List[PromptBlock] - The prompt blocks to use (same format as InlinePromptNode)
-        functions: List[FunctionDefinition] - The functions that can be called
-        function_callables: List[Callable] - The callables that can be called
+        functions: List[Tool] - The functions that can be called
         prompt_inputs: Optional[EntityInputsInterface] - Mapping of input variable names to values
         function_configs: Optional[Dict[str, Dict[str, Any]]] - Mapping of function names to their configuration
     """
 
     ml_model: ClassVar[str] = "gpt-4o-mini"
     blocks: ClassVar[List[PromptBlock]] = []
-    functions: ClassVar[List[Callable[..., Any]]] = []
+    functions: ClassVar[List[Tool]] = []
     prompt_inputs: ClassVar[Optional[EntityInputsInterface]] = None
     function_configs: ClassVar[Optional[Dict[str, Dict[str, Any]]]] = None
 
@@ -106,11 +107,10 @@ class ToolCallingNode(BaseNode):
 
         self._function_nodes = {}
         for function in self.functions:
-            function_name = snake_case(function.__name__)
-
+            function_name = get_function_name(function)
             # Get configuration for this function
             config = {}
-            if self.function_configs and function.__name__ in self.function_configs:
+            if callable(function) and self.function_configs and function.__name__ in self.function_configs:
                 config = self.function_configs[function.__name__]
 
             packages = config.get("packages", None)

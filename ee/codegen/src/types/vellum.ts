@@ -732,12 +732,17 @@ export interface RunnerConfig {
   containerImageTag?: string;
 }
 
+export interface ModuleData {
+  additionalFiles?: Record<string, string>;
+}
+
 export interface WorkflowVersionExecConfig {
   workflowRawData: WorkflowRawData;
   inputVariables: VellumVariable[];
   stateVariables?: VellumVariable[];
   outputVariables: VellumVariable[];
   runnerConfig?: RunnerConfig;
+  moduleData?: ModuleData;
 }
 
 type WorkflowSandboxInput =
@@ -794,6 +799,11 @@ export interface VellumSecretWorkflowReference {
   vellumSecretName: string;
 }
 
+export interface EnvironmentVariableWorkflowReference {
+  type: "ENVIRONMENT_VARIABLE";
+  environmentVariable: string;
+}
+
 export interface ExecutionCounterWorkflowReference {
   type: "EXECUTION_COUNTER";
   nodeId: string;
@@ -825,6 +835,7 @@ export type WorkflowValueDescriptorReference =
   | WorkflowStateVariableWorkflowReference
   | ConstantValueWorkflowReference
   | VellumSecretWorkflowReference
+  | EnvironmentVariableWorkflowReference
   | ExecutionCounterWorkflowReference
   | DictionaryWorkflowReference
   | ArrayWorkflowReference;
@@ -865,6 +876,8 @@ export type OperatorMapping =
   | "not_in"
   | "between"
   | "not_between"
+  | "is_blank"
+  | "is_not_blank"
   | "parse_json"
   | "coalesce"
   | "access_field"
@@ -880,7 +893,18 @@ export interface AttributeConfig {
 }
 
 export interface FunctionArgs {
-  type: string;
+  type: "CODE_EXECUTION";
   src: string;
   definition: FunctionDefinition;
+}
+
+export interface InlineWorkflowFunctionArgs {
+  type: "INLINE_WORKFLOW";
+  exec_config: WorkflowVersionExecConfig;
+}
+
+export interface DeploymentWorkflowFunctionArgs {
+  type: "WORKFLOW_DEPLOYMENT";
+  deployment: string;
+  release_tag: string | null;
 }

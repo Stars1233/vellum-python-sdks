@@ -3,6 +3,7 @@
 from ..core.pydantic_utilities import UniversalBaseModel
 import datetime as dt
 from .entity_status import EntityStatus
+from .document_index_indexing_config import DocumentIndexIndexingConfig
 from ..core.pydantic_utilities import IS_PYDANTIC_V2
 import typing
 import pydantic
@@ -14,6 +15,7 @@ class FolderEntityDocumentIndexData(UniversalBaseModel):
     created: dt.datetime
     modified: dt.datetime
     status: EntityStatus
+    indexing_config: DocumentIndexIndexingConfig
 
     if IS_PYDANTIC_V2:
         model_config: typing.ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(extra="allow", frozen=True)  # type: ignore # Pydantic v2

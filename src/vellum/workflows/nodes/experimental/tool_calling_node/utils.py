@@ -1,4 +1,4 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 import inspect
 import json
 import types
@@ -18,12 +18,15 @@ from vellum.workflows.exceptions import NodeException
 from vellum.workflows.nodes.bases import BaseNode
 from vellum.workflows.nodes.displayable.code_execution_node.node import CodeExecutionNode
 from vellum.workflows.nodes.displayable.inline_prompt_node.node import InlinePromptNode
+from vellum.workflows.nodes.displayable.subworkflow_deployment_node.node import SubworkflowDeploymentNode
 from vellum.workflows.outputs.base import BaseOutput
 from vellum.workflows.ports.port import Port
 from vellum.workflows.references.lazy import LazyReference
 from vellum.workflows.state.base import BaseState
+from vellum.workflows.state.context import WorkflowContext
 from vellum.workflows.state.encoder import DefaultStateEncoder
-from vellum.workflows.types.core import EntityInputsInterface, MergeBehavior
+from vellum.workflows.types.core import EntityInputsInterface, MergeBehavior, Tool
+from vellum.workflows.types.definition import DeploymentDefinition
 from vellum.workflows.types.generics import is_workflow_class
 
 
@@ -67,14 +70,14 @@ class ToolRouterNode(InlinePromptNode):
 def create_tool_router_node(
     ml_model: str,
     blocks: List[PromptBlock],
-    functions: List[Callable[..., Any]],
+    functions: List[Tool],
     prompt_inputs: Optional[EntityInputsInterface],
 ) -> Type[ToolRouterNode]:
     if functions and len(functions) > 0:
         # If we have functions, create dynamic ports for each function
         Ports = type("Ports", (), {})
         for function in functions:
-            function_name = snake_case(function.__name__)
+            function_name = get_function_name(function)
 
             # Avoid using lambda to capture function_name
             # lambda will capture the function_name by reference,
@@ -126,7 +129,7 @@ def create_tool_router_node(
 
 
 def create_function_node(
-    function: Callable[..., Any],
+    function: Tool,
     tool_router_node: Type[ToolRouterNode],
     packages: Optional[Sequence[CodeExecutionPackage]] = None,
     runtime: CodeExecutionRuntime = "PYTHON_3_11_6",
@@ -142,9 +145,61 @@ def create_function_node(
         packages: Optional list of packages to install for code execution (only used for regular functions)
         runtime: The runtime to use for code execution (default: "PYTHON_3_11_6")
     """
-    if is_workflow_class(function):
+    if isinstance(function, DeploymentDefinition):
+        deployment = function.deployment
+        release_tag = function.release_tag
+
+        def execute_workflow_deployment_function(self) -> BaseNode.Outputs:
+            function_call_output = self.state.meta.node_outputs.get(tool_router_node.Outputs.results)
+            if function_call_output and len(function_call_output) > 0:
+                function_call = function_call_output[0]
+                arguments = function_call.value.arguments
+            else:
+                arguments = {}
+
+            subworkflow_node = type(
+                f"DynamicSubworkflowNode_{deployment}",
+                (SubworkflowDeploymentNode,),
+                {
+                    "deployment": deployment,
+                    "release_tag": release_tag,
+                    "subworkflow_inputs": arguments,
+                    "__module__": __name__,
+                },
+            )
+
+            node_instance = subworkflow_node(
+                context=WorkflowContext.create_from(self._context),
+                state=self.state,
+            )
+
+            outputs = {}
+            for output in node_instance.run():
+                outputs[output.name] = output.value
+
+            self.state.chat_history.append(
+                ChatMessage(
+                    role="FUNCTION",
+                    content=StringChatMessageContent(value=json.dumps(outputs, cls=DefaultStateEncoder)),
+                )
+            )
+
+            return self.Outputs()
+
+        node = type(
+            f"WorkflowDeploymentNode_{deployment}",
+            (FunctionNode,),
+            {
+                "run": execute_workflow_deployment_function,
+                "__module__": __name__,
+            },
+        )
+
+        return node
+
+    elif is_workflow_class(function):
         # Create a class-level wrapper that calls the original function
-        def execute_function(self) -> BaseNode.Outputs:
+        def execute_inline_workflow_function(self) -> BaseNode.Outputs:
             outputs = self.state.meta.node_outputs.get(tool_router_node.Outputs.text)
 
             outputs = json.loads(outputs)
@@ -152,8 +207,7 @@ def create_function_node(
 
             # Call the function based on its type
             inputs_instance = function.get_inputs_class()(**arguments)
-
-            workflow = function()
+            workflow = function(context=WorkflowContext.create_from(self._context))
             terminal_event = workflow.run(
                 inputs=inputs_instance,
             )
@@ -181,7 +235,7 @@ def create_function_node(
             f"InlineWorkflowNode_{function.__name__}",
             (FunctionNode,),
             {
-                "run": execute_function,
+                "run": execute_inline_workflow_function,
                 "__module__": __name__,
             },
         )
@@ -246,3 +300,10 @@ def main(arguments):
         )
 
     return node
+
+
+def get_function_name(function: Tool) -> str:
+    if isinstance(function, DeploymentDefinition):
+        return function.deployment
+    else:
+        return snake_case(function.__name__)

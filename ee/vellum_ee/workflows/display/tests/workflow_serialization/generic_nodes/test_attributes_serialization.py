@@ -1,12 +1,15 @@
+from dataclasses import dataclass
 from uuid import uuid4
 from typing import List
 
 from deepdiff import DeepDiff
+from pydantic import BaseModel
 
 from vellum.client.types.chat_message import ChatMessage
 from vellum.workflows.inputs.base import BaseInputs
 from vellum.workflows.nodes.bases.base import BaseNode
 from vellum.workflows.references.constant import ConstantValueReference
+from vellum.workflows.references.environment_variable import EnvironmentVariableReference
 from vellum.workflows.references.lazy import LazyReference
 from vellum.workflows.references.vellum_secret import VellumSecretReference
 from vellum.workflows.state.base import BaseState
@@ -268,7 +271,7 @@ def test_serialize_node__workflow_input_as_nested_chat_history():
             "id": "11be9d37-0069-4695-a317-14a3b6519d4e",
             "label": "test_serialize_node__workflow_input_as_nested_chat_history.<locals>.GenericNode",
             "type": "GENERIC",
-            "display_data": {"position": {"x": 0.0, "y": 0.0}},
+            "display_data": {"position": {"x": 200.0, "y": -50.0}},
             "base": {"name": "BaseNode", "module": ["vellum", "workflows", "nodes", "bases", "base"]},
             "definition": {
                 "name": "GenericNode",
@@ -475,6 +478,21 @@ def test_serialize_node__node_execution(serialize_node):
     )
 
 
+def test_serialize_node__environment_variable(serialize_node):
+    class EnvironmentVariableGenericNode(BaseNode):
+        attr = EnvironmentVariableReference(name="API_KEY")
+
+    serialized_node = serialize_node(EnvironmentVariableGenericNode)
+
+    expected_value = {
+        "type": "ENVIRONMENT_VARIABLE",
+        "environment_variable": "API_KEY",
+    }
+
+    actual_value = serialized_node["attributes"][0]["value"]
+    assert actual_value == expected_value
+
+
 def test_serialize_node__coalesce(serialize_node):
     class CoalesceNodeA(BaseNode):
         class Outputs(BaseNode.Outputs):
@@ -563,4 +581,69 @@ def test_serialize_node__coalesce(serialize_node):
         },
         serialized_node,
         ignore_order=True,
+    )
+
+
+def test_serialize_node__dataclass_with_node_output_reference(serialize_node):
+    @dataclass
+    class MyDataClass:
+        name: str
+        node_ref: str
+
+    class NodeWithOutput(BaseNode):
+        class Outputs(BaseNode.Outputs):
+            result: str
+
+    class NodeWithOutputDisplay(BaseNodeDisplay[NodeWithOutput]):
+        pass
+
+    class GenericNodeWithDataclass(BaseNode):
+        attr = MyDataClass(name="test", node_ref=NodeWithOutput.Outputs.result)
+
+    node_output_id = uuid4()
+    serialized_node = serialize_node(
+        node_class=GenericNodeWithDataclass,
+        global_node_displays={NodeWithOutput: NodeWithOutputDisplay()},
+        global_node_output_displays={
+            NodeWithOutput.Outputs.result: (NodeWithOutput, NodeOutputDisplay(id=node_output_id, name="result"))
+        },
+    )
+
+    attr_value = serialized_node["attributes"][0]["value"]
+    assert attr_value["type"] == "DICTIONARY_REFERENCE"
+
+    assert any(
+        entry["key"] == "node_ref" and entry["value"]["type"] == "NODE_OUTPUT" for entry in attr_value["entries"]
+    )
+
+
+def test_serialize_node__pydantic_with_node_output_reference(serialize_node):
+    class MyPydanticModel(BaseModel):
+        name: str
+        node_ref: str
+
+    class NodeWithOutput(BaseNode):
+        class Outputs(BaseNode.Outputs):
+            result: str
+
+    class NodeWithOutputDisplay(BaseNodeDisplay[NodeWithOutput]):
+        pass
+
+    class GenericNodeWithPydantic(BaseNode):
+        attr = MyPydanticModel(name="test", node_ref=NodeWithOutput.Outputs.result)
+
+    node_output_id = uuid4()
+    serialized_node = serialize_node(
+        node_class=GenericNodeWithPydantic,
+        global_node_displays={NodeWithOutput: NodeWithOutputDisplay()},
+        global_node_output_displays={
+            NodeWithOutput.Outputs.result: (NodeWithOutput, NodeOutputDisplay(id=node_output_id, name="result"))
+        },
+    )
+
+    attr_value = serialized_node["attributes"][0]["value"]
+    assert attr_value["type"] == "DICTIONARY_REFERENCE"
+
+    assert any(
+        entry["key"] == "node_ref" and entry["value"]["type"] == "NODE_OUTPUT" for entry in attr_value["entries"]
     )
