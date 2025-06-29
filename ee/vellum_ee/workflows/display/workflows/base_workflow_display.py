@@ -1,12 +1,15 @@
 from copy import copy
+import fnmatch
 from functools import cached_property
 import importlib
 import inspect
 import logging
+import os
 from uuid import UUID
 from typing import Any, Dict, ForwardRef, Generic, Iterator, List, Optional, Tuple, Type, TypeVar, Union, cast, get_args
 
 from vellum.client import Vellum as VellumClient
+from vellum.core.pydantic_utilities import UniversalBaseModel
 from vellum.workflows import BaseWorkflow
 from vellum.workflows.constants import undefined
 from vellum.workflows.descriptors.base import BaseDescriptor
@@ -18,7 +21,7 @@ from vellum.workflows.nodes.displayable.final_output_node.node import FinalOutpu
 from vellum.workflows.nodes.utils import get_unadorned_node, get_unadorned_port, get_wrapped_node
 from vellum.workflows.ports import Port
 from vellum.workflows.references import OutputReference, WorkflowInputReference
-from vellum.workflows.types.core import JsonArray, JsonObject
+from vellum.workflows.types.core import Json, JsonArray, JsonObject
 from vellum.workflows.types.generics import WorkflowType
 from vellum.workflows.types.utils import get_original_base
 from vellum.workflows.utils.uuids import uuid4_from_hash
@@ -31,7 +34,7 @@ from vellum_ee.workflows.display.base import (
     WorkflowMetaDisplay,
     WorkflowOutputDisplay,
 )
-from vellum_ee.workflows.display.editor.types import NodeDisplayData
+from vellum_ee.workflows.display.editor.types import NodeDisplayData, NodeDisplayPosition
 from vellum_ee.workflows.display.nodes.base_node_display import BaseNodeDisplay
 from vellum_ee.workflows.display.nodes.get_node_display_class import get_node_display_class
 from vellum_ee.workflows.display.nodes.types import NodeOutputDisplay, PortDisplay
@@ -48,12 +51,26 @@ from vellum_ee.workflows.display.types import (
     WorkflowInputsDisplays,
     WorkflowOutputDisplays,
 )
+from vellum_ee.workflows.display.utils.auto_layout import auto_layout_nodes
 from vellum_ee.workflows.display.utils.expressions import serialize_value
 from vellum_ee.workflows.display.utils.registry import register_workflow_display_class
 from vellum_ee.workflows.display.utils.vellum import infer_vellum_variable_type
 from vellum_ee.workflows.display.workflows.get_vellum_workflow_display_class import get_workflow_display
 
 logger = logging.getLogger(__name__)
+
+IGNORE_PATTERNS = [
+    "*.pyc",
+    "__pycache__",
+    ".*",
+    "node_modules/*",
+    "*.log",
+]
+
+
+class WorkflowSerializationResult(UniversalBaseModel):
+    exec_config: Dict[str, Any]
+    errors: List[str]
 
 
 class BaseWorkflowDisplay(Generic[WorkflowType]):
@@ -80,6 +97,8 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
 
     _errors: List[Exception]
 
+    _serialized_files: List[str]
+
     _dry_run: bool
 
     def __init__(
@@ -96,10 +115,20 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
             if self._parent_display_context
             else create_vellum_client()
         )
-        self._errors: List[Exception] = []
+        self._errors = []
+        self._serialized_files = []
         self._dry_run = dry_run
 
     def serialize(self) -> JsonObject:
+        self._serialized_files = [
+            "__init__.py",
+            "display/*",
+            "inputs.py",
+            "nodes/*",
+            "state.py",
+            "workflow.py",
+        ]
+
         input_variables: JsonArray = []
         for workflow_input_reference, workflow_input_display in self.display_context.workflow_input_displays.items():
             default = (
@@ -200,16 +229,21 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
                     raise ValueError(f"Failed to serialize output '{workflow_output.name}': {str(e)}") from e
 
                 source_node_display: Optional[BaseNodeDisplay]
-                first_rule = node_input.value.rules[0]
-                if first_rule.type == "NODE_OUTPUT":
-                    source_node_id = UUID(first_rule.data.node_id)
-                    try:
-                        source_node_display = [
-                            node_display
-                            for node_display in self.display_context.node_displays.values()
-                            if node_display.node_id == source_node_id
-                        ][0]
-                    except IndexError:
+                if not node_input.value.rules:
+                    source_node_display = None
+                else:
+                    first_rule = node_input.value.rules[0]
+                    if first_rule.type == "NODE_OUTPUT":
+                        source_node_id = UUID(first_rule.data.node_id)
+                        try:
+                            source_node_display = [
+                                node_display
+                                for node_display in self.display_context.node_displays.values()
+                                if node_display.node_id == source_node_id
+                            ][0]
+                        except IndexError:
+                            source_node_display = None
+                    else:
                         source_node_display = None
 
                 synthetic_target_handle_id = str(
@@ -315,9 +349,30 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
 
         edges.extend(synthetic_output_edges)
 
+        nodes_list = list(serialized_nodes.values())
+        nodes_dict_list = [cast(Dict[str, Any], node) for node in nodes_list if isinstance(node, dict)]
+
+        all_nodes_at_zero = all(
+            (
+                isinstance(node.get("display_data"), dict)
+                and isinstance(node["display_data"].get("position"), dict)
+                and node["display_data"]["position"].get("x", 0) == 0.0
+                and node["display_data"]["position"].get("y", 0) == 0.0
+            )
+            for node in nodes_dict_list
+        )
+
+        should_apply_auto_layout = all_nodes_at_zero and len(nodes_dict_list) > 0
+
+        if should_apply_auto_layout:
+            try:
+                self._apply_auto_layout(nodes_dict_list, edges)
+            except Exception as e:
+                self.add_error(e)
+
         return {
             "workflow_raw_data": {
-                "nodes": list(serialized_nodes.values()),
+                "nodes": cast(JsonArray, nodes_dict_list),
                 "edges": edges,
                 "display_data": self.display_context.workflow_display.display_data.dict(),
                 "definition": {
@@ -330,6 +385,54 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
             "state_variables": state_variables,
             "output_variables": output_variables,
         }
+
+    def _apply_auto_layout(self, nodes_dict_list: List[Dict[str, Any]], edges: List[Json]) -> None:
+        """Apply auto-layout to nodes that are all positioned at (0,0)."""
+        nodes_for_layout: List[Tuple[str, NodeDisplayData]] = []
+        for node_dict in nodes_dict_list:
+            if isinstance(node_dict.get("id"), str) and isinstance(node_dict.get("display_data"), dict):
+                display_data = node_dict["display_data"]
+                position = display_data.get("position", {})
+                if isinstance(position, dict):
+                    nodes_for_layout.append(
+                        (
+                            str(node_dict["id"]),
+                            NodeDisplayData(
+                                position=NodeDisplayPosition(
+                                    x=float(position.get("x", 0.0)), y=float(position.get("y", 0.0))
+                                ),
+                                width=display_data.get("width"),
+                                height=display_data.get("height"),
+                                comment=display_data.get("comment"),
+                            ),
+                        )
+                    )
+
+        edges_for_layout: List[Tuple[str, str, EdgeDisplay]] = []
+        for edge in edges:
+            if isinstance(edge, dict):
+                edge_dict = cast(Dict[str, Any], edge)
+                edge_source_node_id: Optional[Any] = edge_dict.get("source_node_id")
+                edge_target_node_id: Optional[Any] = edge_dict.get("target_node_id")
+                edge_id_raw: Optional[Any] = edge_dict.get("id")
+                if (
+                    isinstance(edge_source_node_id, str)
+                    and isinstance(edge_target_node_id, str)
+                    and isinstance(edge_id_raw, str)
+                ):
+                    edges_for_layout.append(
+                        (edge_source_node_id, edge_target_node_id, EdgeDisplay(id=UUID(edge_id_raw)))
+                    )
+
+        positioned_nodes = auto_layout_nodes(nodes_for_layout, edges_for_layout)
+
+        for node_id, positioned_data in positioned_nodes:
+            for node_dict in nodes_dict_list:
+                node_id_val = node_dict.get("id")
+                display_data = node_dict.get("display_data")
+                if isinstance(node_id_val, str) and node_id_val == node_id and isinstance(display_data, dict):
+                    display_data_dict = cast(Dict[str, Any], display_data)
+                    display_data_dict["position"] = positioned_data.position.dict()
 
     @cached_property
     def workflow_id(self) -> UUID:
@@ -587,8 +690,7 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
         try:
             display_module = importlib.import_module(full_workflow_display_module_path)
         except ModuleNotFoundError:
-            logger.exception("Failed to import workflow display module: %s", full_workflow_display_module_path)
-            return None
+            return BaseWorkflowDisplay._gather_event_display_context_from_workflow_crawling(module_path, workflow_class)
 
         WorkflowDisplayClass: Optional[Type[BaseWorkflowDisplay]] = None
         for name, definition in display_module.__dict__.items():
@@ -605,11 +707,26 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
             WorkflowDisplayClass = definition
             break
 
-        if not WorkflowDisplayClass:
-            logger.exception("No workflow display class found in module: %s", full_workflow_display_module_path)
-            return None
+        if WorkflowDisplayClass:
+            return WorkflowDisplayClass().get_event_display_context()
 
-        return WorkflowDisplayClass().get_event_display_context()
+        return BaseWorkflowDisplay._gather_event_display_context_from_workflow_crawling(module_path, workflow_class)
+
+    @staticmethod
+    def _gather_event_display_context_from_workflow_crawling(
+        module_path: str,
+        workflow_class: Optional[Type[BaseWorkflow]] = None,
+    ) -> Union[WorkflowEventDisplayContext, None]:
+        try:
+            if workflow_class is None:
+                workflow_class = BaseWorkflow.load_from_module(module_path)
+
+            workflow_display = get_workflow_display(workflow_class=workflow_class)
+            return workflow_display.get_event_display_context()
+
+        except ModuleNotFoundError:
+            logger.exception("Failed to load workflow from module %s", module_path)
+            return None
 
     def get_event_display_context(self):
         display_context = self.display_context
@@ -738,6 +855,83 @@ class BaseWorkflowDisplay(Generic[WorkflowType]):
     @property
     def _workflow(self) -> Type[WorkflowType]:
         return cast(Type[WorkflowType], self.__class__.infer_workflow_class())
+
+    @staticmethod
+    def serialize_module(
+        module: str,
+        *,
+        client: Optional[VellumClient] = None,
+        dry_run: bool = False,
+    ) -> WorkflowSerializationResult:
+        """
+        Load a workflow from a module and serialize it to JSON.
+
+        Args:
+            module: The module path to load the workflow from
+            client: Optional Vellum client to use for serialization
+            dry_run: Whether to run in dry-run mode
+
+        Returns:
+            WorkflowSerializationResult containing exec_config and errors
+        """
+        workflow = BaseWorkflow.load_from_module(module)
+        workflow_display = get_workflow_display(
+            workflow_class=workflow,
+            client=client,
+            dry_run=dry_run,
+        )
+
+        exec_config = workflow_display.serialize()
+        additional_files = workflow_display._gather_additional_module_files(module)
+
+        if additional_files:
+            exec_config["module_data"] = {"additional_files": cast(JsonObject, additional_files)}
+
+        return WorkflowSerializationResult(
+            exec_config=exec_config,
+            errors=[str(error) for error in workflow_display.errors],
+        )
+
+    def _gather_additional_module_files(self, module_path: str) -> Dict[str, str]:
+        workflow_module_path = f"{module_path}.workflow"
+        workflow_module = importlib.import_module(workflow_module_path)
+
+        workflow_file_path = workflow_module.__file__
+        if not workflow_file_path:
+            return {}
+
+        module_dir = os.path.dirname(workflow_file_path)
+        additional_files = {}
+
+        for root, _, filenames in os.walk(module_dir):
+            for filename in filenames:
+                file_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(file_path, start=module_dir)
+
+                should_ignore = False
+                for ignore_pattern in IGNORE_PATTERNS:
+                    if fnmatch.fnmatch(filename, ignore_pattern) or fnmatch.fnmatch(relative_path, ignore_pattern):
+                        should_ignore = True
+                        break
+
+                if not should_ignore:
+                    for serialized_pattern in self._serialized_files:
+                        if fnmatch.fnmatch(relative_path, serialized_pattern) or fnmatch.fnmatch(
+                            filename, serialized_pattern
+                        ):
+                            should_ignore = True
+                            break
+
+                if should_ignore:
+                    continue
+
+                try:
+                    with open(file_path, encoding="utf-8") as f:
+                        additional_files[relative_path] = f.read()
+                except (UnicodeDecodeError, PermissionError):
+                    continue
+
+        return additional_files
 
 
 register_workflow_display_class(workflow_class=BaseWorkflow, workflow_display_class=BaseWorkflowDisplay)

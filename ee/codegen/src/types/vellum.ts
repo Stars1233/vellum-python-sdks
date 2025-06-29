@@ -732,12 +732,17 @@ export interface RunnerConfig {
   containerImageTag?: string;
 }
 
+export interface ModuleData {
+  additionalFiles?: Record<string, string>;
+}
+
 export interface WorkflowVersionExecConfig {
   workflowRawData: WorkflowRawData;
   inputVariables: VellumVariable[];
   stateVariables?: VellumVariable[];
   outputVariables: VellumVariable[];
   runnerConfig?: RunnerConfig;
+  moduleData?: ModuleData;
 }
 
 type WorkflowSandboxInput =
@@ -794,12 +799,18 @@ export interface VellumSecretWorkflowReference {
   vellumSecretName: string;
 }
 
+export interface EnvironmentVariableWorkflowReference {
+  type: "ENVIRONMENT_VARIABLE";
+  environmentVariable: string;
+}
+
 export interface ExecutionCounterWorkflowReference {
   type: "EXECUTION_COUNTER";
   nodeId: string;
 }
 
 export interface DictionaryWorkflowReferenceEntry {
+  id?: string; // TODO: Temporary supporting id key translation for input variable in blocks
   key: string;
   value: WorkflowValueDescriptor | null;
 }
@@ -825,6 +836,7 @@ export type WorkflowValueDescriptorReference =
   | WorkflowStateVariableWorkflowReference
   | ConstantValueWorkflowReference
   | VellumSecretWorkflowReference
+  | EnvironmentVariableWorkflowReference
   | ExecutionCounterWorkflowReference
   | DictionaryWorkflowReference
   | ArrayWorkflowReference;
@@ -865,11 +877,14 @@ export type OperatorMapping =
   | "not_in"
   | "between"
   | "not_between"
+  | "is_blank"
+  | "is_not_blank"
   | "parse_json"
   | "coalesce"
   | "access_field"
   | "or"
-  | "and";
+  | "and"
+  | "is_error";
 
 export interface IterableConfig {
   endWithComma?: boolean;
@@ -879,8 +894,24 @@ export interface AttributeConfig {
   lhs: python.Reference;
 }
 
-export interface FunctionArgs {
-  type: string;
+interface NameDescription {
+  name: string;
+  description: string;
+}
+
+export type FunctionArgs = {
+  type: "CODE_EXECUTION";
   src: string;
   definition: FunctionDefinition;
-}
+} & NameDescription;
+
+export type InlineWorkflowFunctionArgs = {
+  type: "INLINE_WORKFLOW";
+  exec_config: WorkflowVersionExecConfig;
+} & NameDescription;
+
+export type DeploymentWorkflowFunctionArgs = {
+  type: "WORKFLOW_DEPLOYMENT";
+  deployment: string;
+  release_tag: string | null;
+} & NameDescription;

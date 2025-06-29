@@ -17,10 +17,29 @@ from vellum_cli.logger import handle_cli_error, load_cli_logger
 _SUPPORTED_ARCHITECTURE = "amd64"
 
 
-def image_push_command(image: str, tags: Optional[List[str]] = None, workspace: Optional[str] = None) -> None:
+def image_push_command(
+    image: str, tags: Optional[List[str]] = None, workspace: Optional[str] = None, source: Optional[str] = None
+) -> None:
     load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
     logger = load_cli_logger()
     config = load_vellum_cli_config()
+
+    if source:
+        logger.info(f"Building Docker image from Dockerfile: {source}")
+
+        if not os.path.exists(source):
+            handle_cli_error(logger, "Dockerfile not found", f"Dockerfile does not exist: {source}")
+
+        build_result = subprocess.run(
+            ["docker", "buildx", "build", "-f", source, "--platform=linux/amd64", "-t", image, "."],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        if build_result.returncode != 0:
+            handle_cli_error(logger, "Docker build failed", build_result.stderr.decode("utf-8"))
+
+        logger.info("Docker build completed successfully")
     workspace_config = next((w for w in config.workspaces if w.name == workspace), DEFAULT_WORKSPACE_CONFIG)
 
     api_key = os.getenv(workspace_config.api_key, None)

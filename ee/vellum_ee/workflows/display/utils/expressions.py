@@ -1,4 +1,7 @@
+from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, cast
+
+from pydantic import BaseModel
 
 from vellum.client.types.logical_operator import LogicalOperator
 from vellum.workflows.descriptors.base import BaseDescriptor
@@ -31,6 +34,7 @@ from vellum.workflows.expressions.or_ import OrExpression
 from vellum.workflows.expressions.parse_json import ParseJsonExpression
 from vellum.workflows.nodes.displayable.bases.utils import primitive_to_vellum_value
 from vellum.workflows.references.constant import ConstantValueReference
+from vellum.workflows.references.environment_variable import EnvironmentVariableReference
 from vellum.workflows.references.execution_count import ExecutionCountReference
 from vellum.workflows.references.lazy import LazyReference
 from vellum.workflows.references.output import OutputReference
@@ -38,6 +42,7 @@ from vellum.workflows.references.state_value import StateValueReference
 from vellum.workflows.references.vellum_secret import VellumSecretReference
 from vellum.workflows.references.workflow_input import WorkflowInputReference
 from vellum.workflows.types.core import JsonArray, JsonObject
+from vellum.workflows.types.definition import DeploymentDefinition
 from vellum.workflows.types.generics import is_workflow_class
 from vellum.workflows.utils.uuids import uuid4_from_hash
 from vellum_ee.workflows.display.utils.exceptions import UnsupportedSerializationException
@@ -210,7 +215,16 @@ def serialize_value(display_context: "WorkflowDisplayContext", value: Any) -> Js
         return serialize_value(display_context, child_descriptor)
 
     if isinstance(value, WorkflowInputReference):
-        workflow_input_display = display_context.global_workflow_input_displays[value]
+        try:
+            workflow_input_display = display_context.global_workflow_input_displays[value]
+        except KeyError:
+            inputs_class_name = value.inputs_class.__name__
+            workflow_class_name = display_context.workflow_display_class.infer_workflow_class().__name__
+            raise UnsupportedSerializationException(
+                f"Inputs class '{inputs_class_name}' referenced during serialization of '{workflow_class_name}' "
+                f"without parameterizing this Workflow with this Inputs definition. Update your Workflow "
+                f"definition to '{workflow_class_name}(BaseWorkflow[{inputs_class_name}, BaseState])'."
+            )
         return {
             "type": "WORKFLOW_INPUT",
             "input_variable_id": str(workflow_input_display.id),
@@ -237,6 +251,12 @@ def serialize_value(display_context: "WorkflowDisplayContext", value: Any) -> Js
         return {
             "type": "VELLUM_SECRET",
             "vellum_secret_name": value.name,
+        }
+
+    if isinstance(value, EnvironmentVariableReference):
+        return {
+            "type": "ENVIRONMENT_VARIABLE",
+            "environment_variable": value.name,
         }
 
     if isinstance(value, ExecutionCountReference):
@@ -274,6 +294,10 @@ def serialize_value(display_context: "WorkflowDisplayContext", value: Any) -> Js
                 "items": cast(JsonArray, serialized_items),  # list[JsonObject] -> JsonArray
             }
 
+    if is_dataclass(value) and not isinstance(value, type):
+        dict_value = asdict(value)
+        return serialize_value(display_context, dict_value)
+
     if isinstance(value, dict):
         serialized_entries: List[Dict[str, Any]] = [
             {
@@ -305,17 +329,46 @@ def serialize_value(display_context: "WorkflowDisplayContext", value: Any) -> Js
         from vellum_ee.workflows.display.workflows.get_vellum_workflow_display_class import get_workflow_display
 
         workflow_display = get_workflow_display(workflow_class=value)
-        value = workflow_display.serialize()
+        serialized_value: dict = workflow_display.serialize()
+        name = serialized_value["workflow_raw_data"]["definition"]["name"]
+        description = value.__doc__ or ""
         return {
             "type": "CONSTANT_VALUE",
             "value": {
                 "type": "JSON",
                 "value": {
                     "type": "INLINE_WORKFLOW",
-                    "exec_config": value,
+                    "name": name,
+                    "description": description,
+                    "exec_config": serialized_value,
                 },
             },
         }
+
+    if isinstance(value, DeploymentDefinition):
+        workflow_deployment_release = display_context.client.release_reviews.retrieve_workflow_deployment_release(
+            value.deployment, value.release_tag
+        )
+        name = workflow_deployment_release.deployment.name or value.deployment
+        description = workflow_deployment_release.description or f"Workflow Deployment for {name}"
+
+        return {
+            "type": "CONSTANT_VALUE",
+            "value": {
+                "type": "JSON",
+                "value": {
+                    "type": "WORKFLOW_DEPLOYMENT",
+                    "name": name,
+                    "description": description,
+                    "deployment": value.deployment,
+                    "release_tag": value.release_tag,
+                },
+            },
+        }
+
+    if isinstance(value, BaseModel):
+        dict_value = value.model_dump()
+        return serialize_value(display_context, dict_value)
 
     if not isinstance(value, BaseDescriptor):
         vellum_value = primitive_to_vellum_value(value)

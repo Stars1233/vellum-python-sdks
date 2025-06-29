@@ -2,9 +2,9 @@
 
 from ..core.pydantic_utilities import UniversalBaseModel
 import typing_extensions
+import typing
 from .execute_api_response_json import ExecuteApiResponseJson
 from ..core.serialization import FieldMetadata
-import typing
 from ..core.pydantic_utilities import IS_PYDANTIC_V2
 import pydantic
 
@@ -12,7 +12,7 @@ import pydantic
 class ExecuteApiResponse(UniversalBaseModel):
     status_code: int
     text: str
-    json_: typing_extensions.Annotated[ExecuteApiResponseJson, FieldMetadata(alias="json")]
+    json_: typing_extensions.Annotated[typing.Optional[ExecuteApiResponseJson], FieldMetadata(alias="json")] = None
     headers: typing.Dict[str, str]
 
     if IS_PYDANTIC_V2:

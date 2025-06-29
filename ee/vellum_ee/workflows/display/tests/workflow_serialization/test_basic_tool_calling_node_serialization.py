@@ -43,7 +43,7 @@ def test_serialize_workflow():
         "label": "GetCurrentWeatherNode",
         "type": "GENERIC",
         "display_data": {
-            "position": {"x": 0.0, "y": 0.0},
+            "position": {"x": 200.0, "y": -50.0},
             "comment": {"value": "\n    A tool calling node that calls the get_current_weather function.\n    "},
         },
         "base": {
@@ -131,6 +131,8 @@ def test_serialize_workflow():
                         "value": [
                             {
                                 "type": "CODE_EXECUTION",
+                                "name": "get_current_weather",
+                                "description": "\n    Get the current weather in a given location.\n    ",
                                 "definition": {
                                     "state": None,
                                     "cache_config": None,
@@ -144,7 +146,7 @@ def test_serialize_workflow():
                                     "forced": None,
                                     "strict": None,
                                 },
-                                "src": 'def get_current_weather(location: str, unit: str) -> str:\n    """\n    Get the current weather in a given location.\n    """\n    return f"The current weather in {location} is sunny with a temperature of 70 degrees {unit}."\n',  # noqa: E501
+                                "src": 'import math\n\n\ndef get_current_weather(location: str, unit: str) -> str:\n    """\n    Get the current weather in a given location.\n    """\n    return f"The current weather in {location} is sunny with a temperature of {get_temperature(70.1)} degrees {unit}."\n\n\ndef get_temperature(temperature: float) -> int:\n    """\n    Get the temperature in a given location.\n    """\n    return math.floor(temperature)\n',  # noqa: E501
                             }
                         ],
                     },
@@ -182,6 +184,11 @@ def test_serialize_workflow():
                         }
                     ],
                 },
+            },
+            {
+                "id": "1668419e-a193-43a5-8a97-3394e89bf278",
+                "name": "max_prompt_iterations",
+                "value": {"type": "CONSTANT_VALUE", "value": {"type": "NUMBER", "value": 5.0}},
             },
         ],
         "outputs": [

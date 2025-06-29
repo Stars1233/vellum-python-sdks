@@ -11,6 +11,8 @@ from ...nodes.tool_calling_node import ToolCallingNode
 
 
 class ToolCallingNodeDisplay(BaseNodeDisplay[ToolCallingNode]):
+    label = "Tool Calling Node"
+    node_id = UUID("a72bbfd6-9eb5-48af-9c43-55f1d0a75106")
     attribute_ids_by_name = {
         "ml_model": UUID("75bd1347-dca2-4cba-b0b0-a20a2923ebcc"),
         "blocks": UUID("beec5344-2eff-47d2-b920-b90367370d79"),
@@ -68,5 +70,97 @@ class ToolCallingNode(BaseToolCallingNode):
         "question": "What's the weather like in San Francisco?",
     }
     max_tool_calls = 1
+"
+`;
+
+exports[`ToolCallingNode > deployment workflow > should generate latest release tag if release_tag is null 1`] = `
+"from vellum.workflows.nodes.experimental.tool_calling_node import (
+    ToolCallingNode as BaseToolCallingNode,
+)
+from vellum.workflows.types.definition import DeploymentDefinition
+
+
+class ToolCallingNode(BaseToolCallingNode):
+    functions = [DeploymentDefinition(deployment="deployment_workflow_function_name")]
+"
+`;
+
+exports[`ToolCallingNode > function ordering > should preserve order: code-exec, workflow 1`] = `
+"from .add_numbers import add_numbers
+from .subtract.workflow import Subtract
+
+from vellum.workflows.nodes.experimental.tool_calling_node import (
+    ToolCallingNode as BaseToolCallingNode,
+)
+
+
+class ToolCallingNode(BaseToolCallingNode):
+    functions = [add_numbers, Subtract]
+"
+`;
+
+exports[`ToolCallingNode > function ordering > should preserve order: workflow, code-exec 1`] = `
+"from .add_numbers import add_numbers
+from .subtract.workflow import Subtract
+
+from vellum.workflows.nodes.experimental.tool_calling_node import (
+    ToolCallingNode as BaseToolCallingNode,
+)
+
+
+class ToolCallingNode(BaseToolCallingNode):
+    functions = [Subtract, add_numbers]
+"
+`;
+
+exports[`ToolCallingNode > inline workflow > should generate inline workflow function name 1`] = `
+"from .subtract.workflow import Subtract
+
+from vellum.workflows.nodes.experimental.tool_calling_node import (
+    ToolCallingNode as BaseToolCallingNode,
+)
+
+
+class ToolCallingNode(BaseToolCallingNode):
+    functions = [Subtract]
+"
+`;
+
+exports[`ToolCallingNode > input variables > should generate input variables 1`] = `
+"from vellum import (
+    ChatMessagePromptBlock,
+    PlainTextPromptBlock,
+    RichTextPromptBlock,
+    VariablePromptBlock,
+)
+from vellum.workflows.nodes.experimental.tool_calling_node import (
+    ToolCallingNode as BaseToolCallingNode,
+)
+
+
+class ToolCallingNode(BaseToolCallingNode):
+    ml_model = "gpt-4o-mini"
+    prompt_inputs = {
+        "text": None,
+    }
+    blocks = [
+        ChatMessagePromptBlock(
+            chat_role="SYSTEM",
+            blocks=[
+                RichTextPromptBlock(
+                    blocks=[
+                        PlainTextPromptBlock(
+                            text="""\\
+Summarize the following text:
+
+\\
+"""
+                        ),
+                        VariablePromptBlock(input_variable="text"),
+                    ]
+                )
+            ],
+        ),
+    ]
 "
 `;

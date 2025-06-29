@@ -50,6 +50,11 @@ def primitive_type_to_vellum_variable_type(type_: Union[Type, BaseDescriptor]) -
             # Number now supports float and int
             elif types == [float, int]:
                 return "NUMBER"
+
+            collapse_types = _collapse_types(types)
+            if len(collapse_types) == 1:
+                return primitive_type_to_vellum_variable_type(collapse_types[0])
+
             raise ValueError(f"Expected Descriptor to only have one type, got {types}")
 
         type_ = type_.types[0]
@@ -78,6 +83,36 @@ def primitive_type_to_vellum_variable_type(type_: Union[Type, BaseDescriptor]) -
     return "JSON"
 
 
+def vellum_variable_type_to_openapi_type(vellum_type: VellumVariableType) -> str:
+    """Converts a VellumVariableType to a JSON schema primitive type string"""
+    if vellum_type == "STRING":
+        return "string"
+    elif vellum_type == "NUMBER":
+        return "number"
+    elif vellum_type == "JSON":
+        return "object"
+    elif vellum_type == "CHAT_HISTORY":
+        return "array"
+    elif vellum_type == "SEARCH_RESULTS":
+        return "array"
+    elif vellum_type == "ERROR":
+        return "object"
+    elif vellum_type == "ARRAY":
+        return "array"
+    elif vellum_type == "FUNCTION_CALL":
+        return "object"
+    elif vellum_type == "IMAGE":
+        return "object"
+    elif vellum_type == "AUDIO":
+        return "object"
+    elif vellum_type == "DOCUMENT":
+        return "object"
+    elif vellum_type == "NULL":
+        return "null"
+    else:
+        return "object"
+
+
 def _is_type_optionally_equal(type_: Type, target_type: Type) -> bool:
     if type_ == target_type:
         return True
@@ -99,3 +134,35 @@ def _is_type_optionally_equal(type_: Type, target_type: Type) -> bool:
 
 def _is_type_optionally_in(type_: Type, target_types: Tuple[Type, ...]) -> bool:
     return any(_is_type_optionally_equal(type_, target_type) for target_type in target_types)
+
+
+def _collapse_types(types: List[Type]) -> List[Type]:
+    """
+    Collapses a list of types into a list of types that are not subtypes of each other.
+    What remains are the "most specific" types.
+    """
+
+    new_types: List[Type] = []
+    for target_type in types:
+        if any(_is_subtype(source_type, target_type) for source_type in new_types):
+            continue
+
+        new_types.append(target_type)
+
+    return new_types
+
+
+def _is_subtype(source_type: Type, target_type: Type) -> bool:
+    """
+    Checks if `source_type` is a strict subtype of `target_type`. Meaning all values that are
+    of type `source_type` are also of type `target_type`.
+    """
+
+    if source_type == target_type:
+        return True
+
+    source_origin = get_origin(source_type)
+    if source_origin == target_type:
+        return True
+
+    return False

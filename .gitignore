@@ -12,3 +12,4 @@ node_modules/
 tsconfig.tsbuildinfo
 .idea
 .DS_Store
+htmlcov/
