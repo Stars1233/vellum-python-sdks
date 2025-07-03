@@ -12,7 +12,11 @@ import {
 import { createNodeContext, WorkflowContext } from "src/context";
 import { GenericNodeContext } from "src/context/node-context/generic-node";
 import { GenericNode } from "src/generators/nodes/generic-node";
-import { AdornmentNode, NodeAttribute } from "src/types/vellum";
+import {
+  AdornmentNode,
+  NodeAttribute,
+  WorkflowValueDescriptor,
+} from "src/types/vellum";
 
 describe("GenericNode", () => {
   let workflowContext: WorkflowContext;
@@ -20,7 +24,7 @@ describe("GenericNode", () => {
   let node: GenericNode;
 
   beforeEach(() => {
-    workflowContext = workflowContextFactory();
+    workflowContext = workflowContextFactory({ strict: false });
     writer = new Writer();
 
     workflowContext.addInputVariableContext(
@@ -42,7 +46,10 @@ describe("GenericNode", () => {
           id: "2544f9e4-d6e6-4475-b6a9-13393115d77c",
         }),
       ];
-      const nodeData = genericNodeFactory({ nodePorts: nodePortData });
+      const nodeData = genericNodeFactory({
+        nodePorts: nodePortData,
+        id: "9dc95b5d-1467-4b17-abb0-449d1aac6aec",
+      });
 
       const nodeContext = (await createNodeContext({
         workflowContext,
@@ -119,6 +126,7 @@ describe("GenericNode", () => {
       ];
 
       const nodeData = genericNodeFactory({
+        id: "bed8d22e-4835-41d9-ad81-e78a4b0e7ae0",
         label: "MyCustomNode",
         nodeAttributes: nodeAttributes,
         nodePorts: nodePortData,
@@ -303,6 +311,7 @@ describe("GenericNode", () => {
       ];
 
       const nodeData = genericNodeFactory({
+        id: "75ce71d3-d50b-4c8f-9b38-eee8c8362a92",
         label: "MyCustomNode",
         adornments: adornments,
         nodePorts: nodePortData,
@@ -502,6 +511,156 @@ describe("GenericNode", () => {
         workflowContext,
         nodeContext,
       });
+      node.getNodeFile().write(writer);
+      expect(await writer.toStringFormatted()).toMatchSnapshot();
+    });
+  });
+
+  describe("basic with invalid coalesce binary expression", () => {
+    beforeEach(async () => {
+      const nodeAttributes: NodeAttribute[] = [
+        {
+          id: "attr-1",
+          name: "coalesce-attribute",
+          value: {
+            type: "BINARY_EXPRESSION",
+            operator: "coalesce",
+            lhs: null,
+            rhs: {
+              type: "CONSTANT_VALUE",
+              value: {
+                type: "STRING",
+                value: "fallback_value",
+              },
+            },
+          } as unknown as WorkflowValueDescriptor,
+        },
+      ];
+
+      const nodeData = genericNodeFactory({
+        label: "TestCoalesceNode",
+        nodeAttributes: nodeAttributes,
+      });
+
+      const nodeContext = (await createNodeContext({
+        workflowContext,
+        nodeData,
+      })) as GenericNodeContext;
+
+      node = new GenericNode({
+        workflowContext,
+        nodeContext,
+      });
+    });
+
+    it("should handle null LHS in coalesce expression gracefully", async () => {
+      node.getNodeFile().write(writer);
+      expect(await writer.toStringFormatted()).toMatchSnapshot();
+    });
+  });
+
+  describe("basic with invalid blank unary expression", () => {
+    beforeEach(async () => {
+      const nodeAttributes: NodeAttribute[] = [
+        {
+          id: "attr-1",
+          name: "blank-attribute",
+          value: {
+            type: "UNARY_EXPRESSION",
+            operator: "blank",
+            lhs: null,
+          } as unknown as WorkflowValueDescriptor,
+        },
+      ];
+
+      const nodeData = genericNodeFactory({
+        label: "TestBlankNode",
+        nodeAttributes: nodeAttributes,
+      });
+
+      const nodeContext = (await createNodeContext({
+        workflowContext,
+        nodeData,
+      })) as GenericNodeContext;
+
+      node = new GenericNode({
+        workflowContext,
+        nodeContext,
+      });
+    });
+
+    it("should handle null LHS in blank expression gracefully", async () => {
+      node.getNodeFile().write(writer);
+      expect(await writer.toStringFormatted()).toMatchSnapshot();
+    });
+  });
+
+  describe("basic with invalid notBlank unary expression", () => {
+    beforeEach(async () => {
+      const nodeAttributes: NodeAttribute[] = [
+        {
+          id: "attr-2",
+          name: "notBlank-attribute",
+          value: {
+            type: "UNARY_EXPRESSION",
+            operator: "notBlank",
+            lhs: null,
+          } as unknown as WorkflowValueDescriptor,
+        },
+      ];
+
+      const nodeData = genericNodeFactory({
+        label: "TestNotBlankNode",
+        nodeAttributes: nodeAttributes,
+      });
+
+      const nodeContext = (await createNodeContext({
+        workflowContext,
+        nodeData,
+      })) as GenericNodeContext;
+
+      node = new GenericNode({
+        workflowContext,
+        nodeContext,
+      });
+    });
+
+    it("should handle null LHS in notBlank expression gracefully", async () => {
+      node.getNodeFile().write(writer);
+      expect(await writer.toStringFormatted()).toMatchSnapshot();
+    });
+  });
+
+  describe("basic with environment variable reference as attribute", () => {
+    beforeEach(async () => {
+      const nodeAttributes: NodeAttribute[] = [
+        {
+          id: "attr-1",
+          name: "api-key-attribute",
+          value: {
+            type: "ENVIRONMENT_VARIABLE",
+            environmentVariable: "API_KEY",
+          },
+        },
+      ];
+
+      const nodeData = genericNodeFactory({
+        label: "TestEnvironmentVariableNode",
+        nodeAttributes: nodeAttributes,
+      });
+
+      const nodeContext = (await createNodeContext({
+        workflowContext,
+        nodeData,
+      })) as GenericNodeContext;
+
+      node = new GenericNode({
+        workflowContext,
+        nodeContext,
+      });
+    });
+
+    it("getNodeFile", async () => {
       node.getNodeFile().write(writer);
       expect(await writer.toStringFormatted()).toMatchSnapshot();
     });

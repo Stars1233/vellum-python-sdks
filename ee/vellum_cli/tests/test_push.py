@@ -140,6 +140,7 @@ def test_push__happy_path(mock_module, vellum_client, base_command):
     assert extracted_files["workflow.py"] == workflow_py_file_content
 
 
+@pytest.mark.usefixtures("info_log_level")
 def test_push__verify_default_url_in_raw_httpx_transport(mock_module, mock_httpx_transport):
     # GIVEN a single workflow configured
     module = mock_module.module
@@ -396,6 +397,7 @@ def test_push__deployment(mock_module, vellum_client, base_command):
     assert extracted_files["workflow.py"] == workflow_py_file_content
 
 
+@pytest.mark.usefixtures("info_log_level")
 def test_push__dry_run_option_returns_report(mock_module, vellum_client):
     # GIVEN a single workflow configured
     temp_dir = mock_module.temp_dir
@@ -444,8 +446,8 @@ class ExampleWorkflow(BaseWorkflow):
     runner = CliRunner(mix_stderr=True)
     result = runner.invoke(cli_main, ["push", module, "--dry-run"])
 
-    # THEN it should succeed
-    assert result.exit_code == 0
+    # THEN it should fail with exit code 1 due to errors
+    assert result.exit_code == 1
 
     # AND we should have called the push API with the dry-run option
     vellum_client.workflows.push.assert_called_once()
@@ -459,6 +461,39 @@ class ExampleWorkflow(BaseWorkflow):
     assert "iterable_item_added" in result.output
 
 
+@pytest.mark.usefixtures("info_log_level")
+def test_push__dry_run_option_no_errors_returns_success(mock_module, vellum_client):
+    """Test that dry-run returns exit code 0 when there are no errors or diffs"""
+    # GIVEN a workflow module with a valid workflow (using the same pattern as happy path test)
+    temp_dir = mock_module.temp_dir
+    module = mock_module.module
+    _ensure_workflow_py(temp_dir, module)
+
+    # AND the push API call returns successfully with no errors and no diffs
+    vellum_client.workflows.push.return_value = WorkflowPushResponse(
+        workflow_sandbox_id=str(uuid4()),
+        proposed_diffs=None,
+    )
+
+    # WHEN calling `vellum push` with dry-run
+    runner = CliRunner(mix_stderr=True)
+    result = runner.invoke(cli_main, ["push", module, "--dry-run"])
+
+    # THEN it should succeed with exit code 0
+    assert result.exit_code == 0
+
+    # AND we should have called the push API with the dry-run option
+    vellum_client.workflows.push.assert_called_once()
+    call_args = vellum_client.workflows.push.call_args.kwargs
+    assert call_args["dry_run"] is True
+
+    # AND the report should be in the output
+    assert "## Errors" in result.output
+    assert "No errors found." in result.output
+    assert "## Proposed Diffs" in result.output
+
+
+@pytest.mark.usefixtures("info_log_level")
 def test_push__strict_option_returns_diffs(mock_module, vellum_client):
     # GIVEN a single workflow configured
     temp_dir = mock_module.temp_dir
@@ -702,6 +737,7 @@ MY_OTHER_VELLUM_API_KEY=aaabbbcccddd
         }
 
 
+@pytest.mark.usefixtures("info_log_level")
 def test_push__workspace_option__uses_different_api_url_env(mock_module, mock_httpx_transport):
     # GIVEN a single workflow configured
     temp_dir = mock_module.temp_dir
@@ -943,3 +979,63 @@ def test_push__use_default_workspace_if_not_specified__multiple_workflows_config
         config = configs[0]
         assert config["workflow_sandbox_id"] == workflow_sandbox_id
         assert config["workspace"] == "default"
+
+
+def test_push__deploy_with_malformed_release_tags_shows_friendly_validation_error(mock_module, vellum_client):
+    # GIVEN a single workflow configured
+    temp_dir = mock_module.temp_dir
+    module = mock_module.module
+
+    # AND a workflow exists in the module successfully
+    _ensure_workflow_py(temp_dir, module)
+
+    # AND the push API call would return successfully
+    vellum_client.workflows.push.return_value = WorkflowPushResponse(
+        workflow_sandbox_id=str(uuid4()),
+    )
+
+    # WHEN calling `vellum workflows push` with --deploy and --release-tag
+    runner = CliRunner()
+    result = runner.invoke(cli_main, ["workflows", "push", module, "--deploy", "--release-tag", None])  # type: ignore
+
+    # THEN it should show the friendly error message instead of a raw Pydantic traceback
+    assert "Invalid release tag format" in result.output
+    assert "Release tags must be provided as separate arguments" in result.output
+    assert "--release-tag tag1 --release-tag tag2" in result.output
+
+
+@pytest.mark.usefixtures("info_log_level")
+def test_push__deploy_with_release_tags_success(mock_module, vellum_client):
+    # GIVEN a single workflow configured
+    temp_dir = mock_module.temp_dir
+    module = mock_module.module
+
+    # AND a workflow exists in the module successfully
+    _ensure_workflow_py(temp_dir, module)
+
+    # AND the push API call returns successfully
+    workflow_deployment_id = str(uuid4())
+    vellum_client.workflows.push.return_value = WorkflowPushResponse(
+        workflow_sandbox_id=str(uuid4()),
+        workflow_deployment_id=workflow_deployment_id,
+    )
+
+    # WHEN calling `vellum workflows push` with --deploy and --release-tag
+    runner = CliRunner()
+    result = runner.invoke(cli_main, ["workflows", "push", module, "--deploy", "--release-tag", "v1.0.0"])
+
+    # THEN it should succeed
+    assert result.exit_code == 0, result.output
+
+    # AND we should have called the push API with the correct deployment config
+    vellum_client.workflows.push.assert_called_once()
+    call_args = vellum_client.workflows.push.call_args.kwargs
+
+    # AND the deployment_config should contain the release tags
+    deployment_config_str = call_args["deployment_config"]
+    deployment_config = json.loads(deployment_config_str)
+    assert deployment_config["release_tags"] == ["v1.0.0"]
+
+    # AND should show success message
+    assert "Successfully pushed" in result.output
+    assert "Updated vellum.lock.json file." in result.output

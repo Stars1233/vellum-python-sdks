@@ -2,7 +2,7 @@ from vellum.client.types.chat_message_prompt_block import ChatMessagePromptBlock
 from vellum.client.types.plain_text_prompt_block import PlainTextPromptBlock
 from vellum.client.types.rich_text_prompt_block import RichTextPromptBlock
 from vellum.client.types.variable_prompt_block import VariablePromptBlock
-from vellum.workflows.nodes.experimental.tool_calling_node import ToolCallingNode
+from vellum.workflows.nodes.displayable.tool_calling_node import ToolCallingNode
 from vellum.workflows.workflows.base import BaseWorkflow
 
 
@@ -13,8 +13,8 @@ def get_current_weather(location: str, unit: str) -> str:
     return f"The current weather in {location} is sunny with a temperature of 70 degrees {unit}."
 
 
-def format_answer(answer: str) -> int:
-    return 1 + 1
+def format_answer(answer: str) -> str:
+    return f"The answer is: {answer}"
 
 
 class GetCurrentWeatherNode(ToolCallingNode):

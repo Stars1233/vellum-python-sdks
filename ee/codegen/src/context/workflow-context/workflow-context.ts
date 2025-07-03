@@ -64,6 +64,7 @@ export declare namespace WorkflowContext {
     strict: boolean;
     disableFormatting: boolean;
     classNames?: Set<string>;
+    nestedWorkflowModuleName?: string;
   };
 }
 
@@ -107,6 +108,9 @@ export class WorkflowContext {
   // Track what node module names are used within this workflow so that we can ensure name uniqueness when adding
   // new nodes.
   private readonly nodeModuleNames: Set<string> = new Set();
+
+  // Track the custom workflow module name if it exists
+  public readonly nestedWorkflowModuleName?: string;
 
   // A list of all outputs this workflow produces
   public readonly workflowOutputContexts: WorkflowOutputContext[] = [];
@@ -167,15 +171,32 @@ export class WorkflowContext {
     strict,
     disableFormatting,
     classNames,
+    nestedWorkflowModuleName,
   }: WorkflowContext.Args) {
     this.absolutePathToOutputDirectory = absolutePathToOutputDirectory;
     this.moduleName = moduleName;
-    this.modulePath = parentNode
-      ? [
+    this.nestedWorkflowModuleName = nestedWorkflowModuleName;
+
+    if (parentNode) {
+      if (nestedWorkflowModuleName) {
+        this.modulePath = [
+          ...parentNode.nodeContext.nodeModulePath,
+          nestedWorkflowModuleName,
+          GENERATED_WORKFLOW_MODULE_NAME,
+        ];
+      } else {
+        this.modulePath = [
           ...parentNode.nodeContext.nodeModulePath,
           GENERATED_WORKFLOW_MODULE_NAME,
-        ]
-      : [...this.moduleName.split("."), GENERATED_WORKFLOW_MODULE_NAME];
+        ];
+      }
+    } else {
+      this.modulePath = [
+        ...this.moduleName.split("."),
+        GENERATED_WORKFLOW_MODULE_NAME,
+      ];
+    }
+
     this.workflowClassName = workflowClassName;
     this.vellumApiKey = vellumApiKey;
     this.vellumApiEnvironment = vellumApiEnvironment;
@@ -224,11 +245,13 @@ export class WorkflowContext {
     workflowClassName,
     workflowRawData,
     classNames,
+    nestedWorkflowModuleName,
   }: {
     parentNode: BaseNode<WorkflowDataNode, BaseNodeContext<WorkflowDataNode>>;
     workflowClassName: string;
     workflowRawData: WorkflowRawData;
     classNames?: Set<string>;
+    nestedWorkflowModuleName?: string;
   }) {
     return new WorkflowContext({
       absolutePathToOutputDirectory: this.absolutePathToOutputDirectory,
@@ -246,6 +269,7 @@ export class WorkflowContext {
       strict: this.strict,
       disableFormatting: this.disableFormatting,
       classNames,
+      nestedWorkflowModuleName,
     });
   }
 
@@ -526,7 +550,7 @@ export class WorkflowContext {
     return this.classNames.has(className);
   }
 
-  private addUsedClassName(className: string): void {
+  public addUsedClassName(className: string): void {
     this.classNames.add(className);
   }
 
@@ -535,7 +559,6 @@ export class WorkflowContext {
     let numRenameAttempts = 0;
 
     if (!this.isClassNameUsed(sanitizedName)) {
-      this.addUsedClassName(sanitizedName);
       return sanitizedName;
     }
 
@@ -544,7 +567,6 @@ export class WorkflowContext {
       sanitizedName = `${createPythonClassName(baseName)}${numRenameAttempts}`;
     }
 
-    this.addUsedClassName(sanitizedName);
     return sanitizedName;
   }
 

@@ -1,6 +1,9 @@
+from typing import List
+
 from deepdiff import DeepDiff
 
 from vellum import ChatMessagePromptBlock, FunctionDefinition, JinjaPromptBlock
+from vellum.client.types.chat_message import ChatMessage
 from vellum.workflows import BaseWorkflow
 from vellum.workflows.inputs import BaseInputs
 from vellum.workflows.nodes import InlinePromptNode
@@ -63,7 +66,7 @@ def test_serialize_workflow():
         "type": "ENTRYPOINT",
         "inputs": [],
         "data": {"label": "Entrypoint Node", "source_handle_id": "8294baa6-8bf4-4b54-a56b-407b64851b77"},
-        "display_data": {"position": {"x": 0.0, "y": 0.0}},
+        "display_data": {"position": {"x": 0.0, "y": -50.0}},
         "base": None,
         "definition": None,
     }
@@ -153,7 +156,7 @@ def test_serialize_workflow():
                 },
                 "ml_model_name": "gpt-4o",
             },
-            "display_data": {"position": {"x": 0.0, "y": 0.0}},
+            "display_data": {"position": {"x": 200.0, "y": -50.0}},
             "base": {
                 "name": "InlinePromptNode",
                 "module": ["vellum", "workflows", "nodes", "displayable", "inline_prompt_node", "node"],
@@ -173,6 +176,34 @@ def test_serialize_workflow():
                     "id": "6cd5395c-6e46-4bc9-b98c-8f8924554555",
                     "name": "ml_model",
                     "value": {"type": "CONSTANT_VALUE", "value": {"type": "STRING", "value": "gpt-4o"}},
+                },
+                {
+                    "id": "25f935f3-363f-4ead-a5a0-db234ca67e1e",
+                    "name": "blocks",
+                    "value": {
+                        "type": "CONSTANT_VALUE",
+                        "value": {
+                            "type": "JSON",
+                            "value": [
+                                {
+                                    "block_type": "CHAT_MESSAGE",
+                                    "state": None,
+                                    "cache_config": None,
+                                    "chat_role": "SYSTEM",
+                                    "chat_source": None,
+                                    "chat_message_unterminated": None,
+                                    "blocks": [
+                                        {
+                                            "block_type": "JINJA",
+                                            "state": None,
+                                            "cache_config": None,
+                                            "template": "What's your favorite {{noun}}?",
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    },
                 },
                 {
                     "id": "ffabe7d2-8ab6-4201-9d41-c4d7be1386e1",
@@ -209,6 +240,27 @@ def test_serialize_workflow():
                                     "strict": None,
                                 }
                             ],
+                        },
+                    },
+                },
+                {
+                    "id": "2b98319f-f43d-42d9-a8b0-b148d5de0a2c",
+                    "name": "parameters",
+                    "value": {
+                        "type": "CONSTANT_VALUE",
+                        "value": {
+                            "type": "JSON",
+                            "value": {
+                                "stop": [],
+                                "temperature": 0.0,
+                                "max_tokens": 4096,
+                                "top_p": 1.0,
+                                "top_k": 0,
+                                "frequency_penalty": 0.0,
+                                "presence_penalty": 0.0,
+                                "logit_bias": None,
+                                "custom_parameters": None,
+                            },
                         },
                     },
                 },
@@ -249,7 +301,7 @@ def test_serialize_workflow():
                     },
                 }
             ],
-            "display_data": {"position": {"x": 0.0, "y": 0.0}},
+            "display_data": {"position": {"x": 400.0, "y": -50.0}},
             "base": {
                 "name": "FinalOutputNode",
                 "module": ["vellum", "workflows", "nodes", "displayable", "final_output_node", "node"],
@@ -354,4 +406,203 @@ def test_serialize_workflow_with_descriptor_functions():
         "node_id": "cb1186e0-8ff1-4145-823e-96b3fc05a39a",
         "node_output_id": "470fadb9-b8b5-477e-a502-5209d398bcf9",
         "type": "NODE_OUTPUT",
+    }
+
+
+def test_serialize_workflow_with_descriptor_blocks():
+    """Test that serialization handles BaseDescriptor instances in blocks list."""
+
+    class TestInputs(BaseInputs):
+        noun: str
+
+    class UpstreamNode(BaseNode):
+        class Outputs(BaseNode.Outputs):
+            results: list
+
+        def run(self) -> Outputs:
+            return self.Outputs(results=["test"])
+
+    class TestInlinePromptNodeWithDescriptorBlocks(InlinePromptNode):
+        ml_model = "gpt-4o"
+        blocks = [UpstreamNode.Outputs.results[0]]  # type: ignore
+        prompt_inputs = {"noun": TestInputs.noun}
+
+    class TestWorkflow(BaseWorkflow[TestInputs, BaseState]):
+        graph = UpstreamNode >> TestInlinePromptNodeWithDescriptorBlocks
+
+    workflow_display = get_workflow_display(workflow_class=TestWorkflow)
+    serialized: dict = workflow_display.serialize()
+
+    prompt_nodes = [node for node in serialized["workflow_raw_data"]["nodes"] if node["type"] == "PROMPT"]
+    prompt_node = prompt_nodes[0]
+
+    blocks = prompt_node["data"]["exec_config"]["prompt_template_block_data"]["blocks"]
+    descriptor_blocks = [block for block in blocks if not isinstance(block, dict) or not block.get("block_type")]
+    assert len(descriptor_blocks) == 0, "BaseDescriptor blocks should not appear in serialized blocks"
+
+    blocks_attr = next((attr for attr in prompt_node["attributes"] if attr["name"] == "blocks"), None)
+    assert blocks_attr is not None, "blocks attribute should be present when blocks contain BaseDescriptor"
+    assert blocks_attr["value"]["type"] == "ARRAY_REFERENCE", "blocks attribute should be serialized as ARRAY_REFERENCE"
+    assert blocks_attr["value"]["items"] == [
+        {
+            "type": "BINARY_EXPRESSION",
+            "lhs": {
+                "type": "NODE_OUTPUT",
+                "node_id": str(UpstreamNode.__id__),
+                "node_output_id": str(UpstreamNode.__output_ids__["results"]),
+            },
+            "operator": "accessField",
+            "rhs": {
+                "type": "CONSTANT_VALUE",
+                "value": {
+                    "type": "NUMBER",
+                    "value": 0.0,
+                },
+            },
+        }
+    ]
+
+
+def test_serialize_workflow_with_nested_descriptor_blocks():
+    """Test that serialization handles BaseDescriptor instances nested in ChatMessageBlock.blocks."""
+
+    class TestInputs(BaseInputs):
+        noun: str
+
+    class UpstreamNode(BaseNode):
+        class Outputs(BaseNode.Outputs):
+            results: list
+
+        def run(self) -> Outputs:
+            return self.Outputs(results=["test"])
+
+    chat_block = ChatMessagePromptBlock(chat_role="SYSTEM", blocks=[JinjaPromptBlock(template="Hello")])
+
+    class TestInlinePromptNodeWithNestedDescriptorBlocks(InlinePromptNode):
+        ml_model = "gpt-4o"
+        blocks = [chat_block]
+        prompt_inputs = {"noun": TestInputs.noun}
+
+    object.__setattr__(chat_block, "blocks", [UpstreamNode.Outputs.results[0]])
+
+    class TestWorkflow(BaseWorkflow[TestInputs, BaseState]):
+        graph = UpstreamNode >> TestInlinePromptNodeWithNestedDescriptorBlocks
+
+    workflow_display = get_workflow_display(workflow_class=TestWorkflow)
+    serialized: dict = workflow_display.serialize()
+
+    prompt_nodes = [node for node in serialized["workflow_raw_data"]["nodes"] if node["type"] == "PROMPT"]
+    prompt_node = prompt_nodes[0]
+
+    blocks = prompt_node["data"]["exec_config"]["prompt_template_block_data"]["blocks"]
+    descriptor_blocks = [block for block in blocks if not isinstance(block, dict) or not block.get("block_type")]
+    assert len(descriptor_blocks) == 0, "BaseDescriptor blocks should not appear in serialized blocks"
+
+    blocks_attr = next((attr for attr in prompt_node["attributes"] if attr["name"] == "blocks"), None)
+    assert blocks_attr is not None, "blocks attribute should be present when blocks contain nested BaseDescriptor"
+    assert blocks_attr["value"]["type"] == "ARRAY_REFERENCE", "blocks attribute should be serialized as ARRAY_REFERENCE"
+    assert blocks_attr["value"]["items"] == [
+        {
+            "entries": [
+                {
+                    "id": "24a203be-3cba-4b20-bc84-9993a476c120",
+                    "key": "block_type",
+                    "value": {"type": "CONSTANT_VALUE", "value": {"type": "STRING", "value": "CHAT_MESSAGE"}},
+                },
+                {
+                    "id": "c06269e6-f74c-4860-8fa5-22dcbdc89399",
+                    "key": "state",
+                    "value": {"type": "CONSTANT_VALUE", "value": {"type": "JSON", "value": None}},
+                },
+                {
+                    "id": "dd9c0d43-b931-4dc8-8b3a-a7507ddff0c1",
+                    "key": "cache_config",
+                    "value": {"type": "CONSTANT_VALUE", "value": {"type": "JSON", "value": None}},
+                },
+                {
+                    "id": "bef22f2b-0b6e-4910-88cc-6df736d2e20e",
+                    "key": "chat_role",
+                    "value": {"type": "CONSTANT_VALUE", "value": {"type": "STRING", "value": "SYSTEM"}},
+                },
+                {
+                    "id": "c0beec30-f85e-4a78-a3fb-baee54a692f8",
+                    "key": "chat_source",
+                    "value": {"type": "CONSTANT_VALUE", "value": {"type": "JSON", "value": None}},
+                },
+                {
+                    "id": "f601f4f2-62fe-4697-9fe0-99ca8aa64500",
+                    "key": "chat_message_unterminated",
+                    "value": {"type": "CONSTANT_VALUE", "value": {"type": "JSON", "value": None}},
+                },
+                {
+                    "id": "ad550008-64e3-44a3-a32a-84ec226db31c",
+                    "key": "blocks",
+                    "value": {
+                        "items": [
+                            {
+                                "lhs": {
+                                    "node_id": "9fe5d3a3-7d26-4692-aa2d-e67c673b0c2b",
+                                    "node_output_id": "92f9a1b7-d33b-4f00-b4c2-e6f58150e166",
+                                    "type": "NODE_OUTPUT",
+                                },
+                                "operator": "accessField",
+                                "rhs": {"type": "CONSTANT_VALUE", "value": {"type": "NUMBER", "value": 0.0}},
+                                "type": "BINARY_EXPRESSION",
+                            }
+                        ],
+                        "type": "ARRAY_REFERENCE",
+                    },
+                },
+            ],
+            "type": "DICTIONARY_REFERENCE",
+        }
+    ]
+
+
+def test_inline_prompt_node__coalesce_expression_serialization():
+    """
+    Tests that prompt nodes can serialize coalesce expressions like State.chat_history.coalesce([]).
+    """
+
+    # GIVEN a custom state with chat_history
+    class MyState(BaseState):
+        chat_history: List[ChatMessage] = []
+
+    # AND a prompt node that uses a coalesce expression as input
+    class MyNode(InlinePromptNode[MyState]):
+        ml_model = "gpt-4o"
+        blocks = []
+        prompt_inputs = {
+            "chat_history": MyState.chat_history.coalesce([]),
+        }
+
+    class TestWorkflow(BaseWorkflow[BaseInputs, MyState]):
+        graph = MyNode
+
+    # WHEN the node is serialized
+    workflow_display = get_workflow_display(workflow_class=TestWorkflow)
+    serialized: dict = workflow_display.serialize()
+
+    # THEN the prompt is serialized with the correct inputs
+    prompt_nodes = [node for node in serialized["workflow_raw_data"]["nodes"] if node["type"] == "PROMPT"]
+    prompt_node = prompt_nodes[0]
+
+    prompt_inputs_attr = next((attr for attr in prompt_node["attributes"] if attr["name"] == "prompt_inputs"), None)
+    assert prompt_inputs_attr
+    assert prompt_inputs_attr["value"]["type"] == "DICTIONARY_REFERENCE"
+    chat_history_entry = prompt_inputs_attr["value"]["entries"][0]
+
+    assert chat_history_entry["key"] == "chat_history"
+    assert chat_history_entry["value"]["type"] == "BINARY_EXPRESSION"
+    assert chat_history_entry["value"]["operator"] == "coalesce"
+    assert chat_history_entry["value"]["lhs"] == {
+        "type": "WORKFLOW_STATE",
+        "state_variable_id": "6012a4f7-a8ff-464d-bd62-7c41fde06fa4",
+    }
+    assert chat_history_entry["value"]["rhs"] == {
+        "type": "CONSTANT_VALUE",
+        "value": {
+            "type": "JSON",
+            "value": [],
+        },
     }

@@ -3,7 +3,6 @@ import { AstNode } from "@fern-api/python-ast/core/AstNode";
 
 import { OUTPUTS_CLASS_NAME } from "src/constants";
 import { FinalOutputNodeContext } from "src/context/node-context/final-output-node";
-import { BaseState } from "src/generators/base-state";
 import { BaseNode } from "src/generators/nodes/bases/base";
 import { WorkflowValueDescriptor } from "src/generators/workflow-value-descriptor";
 import { FinalOutputNode as FinalOutputNodeType } from "src/types/vellum";
@@ -14,15 +13,11 @@ export class FinalOutputNode extends BaseNode<
   FinalOutputNodeContext
 > {
   protected getNodeBaseGenericTypes(): AstNode[] {
-    const baseStateClassReference = new BaseState({
-      workflowContext: this.workflowContext,
-    });
-
+    const stateType = this.getStateTypeOrBaseState();
     const primitiveOutputType = getVellumVariablePrimitiveType(
       this.nodeData.data.outputType
     );
-
-    return [baseStateClassReference, primitiveOutputType];
+    return [stateType, primitiveOutputType];
   }
 
   getNodeClassBodyStatements(): AstNode[] {
@@ -77,20 +72,6 @@ export class FinalOutputNode extends BaseNode<
 
   getNodeDisplayClassBodyStatements(): AstNode[] {
     const statements: AstNode[] = [];
-
-    statements.push(
-      python.field({
-        name: "label",
-        initializer: python.TypeInstantiation.str(this.nodeData.data.label),
-      })
-    );
-
-    statements.push(
-      python.field({
-        name: "node_id",
-        initializer: python.TypeInstantiation.uuid(this.nodeData.id),
-      })
-    );
 
     statements.push(
       python.field({

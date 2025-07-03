@@ -7,7 +7,6 @@ import { AstNode } from "@fern-api/python-ast/core/AstNode";
 import { OUTPUTS_CLASS_NAME } from "src/constants";
 import { CodeExecutionContext } from "src/context/node-context/code-execution-node";
 import { InitFile } from "src/generators";
-import { BaseState } from "src/generators/base-state";
 import { NodeAttributeGenerationError } from "src/generators/errors";
 import { BaseNode } from "src/generators/nodes/bases/base";
 import { CodeExecutionNode as CodeExecutionNodeType } from "src/types/vellum";
@@ -59,15 +58,11 @@ export class CodeExecutionNode extends BaseNode<
   }
 
   protected getNodeBaseGenericTypes(): AstNode[] {
-    const baseStateClassReference = new BaseState({
-      workflowContext: this.workflowContext,
-    });
-
+    const stateType = this.getStateTypeOrBaseState();
     const primitiveOutputType = getVellumVariablePrimitiveType(
       this.nodeData.data.outputType
     );
-
-    return [baseStateClassReference, primitiveOutputType];
+    return [stateType, primitiveOutputType];
   }
 
   getNodeClassBodyStatements(): AstNode[] {
@@ -132,6 +127,16 @@ export class CodeExecutionNode extends BaseNode<
                       name: "version",
                       value: python.TypeInstantiation.str(package_.version),
                     }),
+                    ...(package_.repository
+                      ? [
+                          python.methodArgument({
+                            name: "repository",
+                            value: python.TypeInstantiation.str(
+                              package_.repository
+                            ),
+                          }),
+                        ]
+                      : []),
                   ],
                 })
               ),
@@ -149,20 +154,6 @@ export class CodeExecutionNode extends BaseNode<
   getNodeDisplayClassBodyStatements(): AstNode[] {
     const nodeData = this.nodeData.data;
     const statements: AstNode[] = [];
-
-    statements.push(
-      python.field({
-        name: "label",
-        initializer: python.TypeInstantiation.str(this.nodeData.data.label),
-      })
-    );
-
-    statements.push(
-      python.field({
-        name: "node_id",
-        initializer: python.TypeInstantiation.uuid(this.nodeData.id),
-      })
-    );
 
     statements.push(
       python.field({

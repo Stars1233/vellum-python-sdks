@@ -1,8 +1,7 @@
-from vellum.client.types.code_execution_package import CodeExecutionPackage
 from vellum.workflows import BaseWorkflow
 from vellum.workflows.inputs import BaseInputs
 from vellum.workflows.nodes.displayable.inline_prompt_node.node import InlinePromptNode
-from vellum.workflows.nodes.experimental.tool_calling_node.node import ToolCallingNode
+from vellum.workflows.nodes.displayable.tool_calling_node.node import ToolCallingNode
 from vellum.workflows.state.base import BaseState
 from vellum_ee.workflows.display.workflows.get_vellum_workflow_display_class import get_workflow_display
 
@@ -122,103 +121,4 @@ def test_serialize_node__prompt_inputs__mixed_values():
                 },
             ],
         },
-    }
-
-
-def test_serialize_node__function_configs():
-    # GIVEN a tool calling node with function packages
-    def foo():
-        pass
-
-    def bar():
-        pass
-
-    class MyToolCallingNode(ToolCallingNode):
-        functions = [foo, bar]
-        function_configs = {
-            "foo": {
-                "runtime": "PYTHON_3_11_6",
-                "packages": [
-                    CodeExecutionPackage(name="first_package", version="1.0.0"),
-                    CodeExecutionPackage(name="second_package", version="2.0.0"),
-                ],
-            },
-            "bar": {
-                "runtime": "PYTHON_3_11_6",
-                "packages": [CodeExecutionPackage(name="third_package", version="3.0.0")],
-            },
-        }
-
-    # AND a workflow with the tool calling node
-    class Workflow(BaseWorkflow):
-        graph = MyToolCallingNode
-
-    # WHEN the workflow is serialized
-    workflow_display = get_workflow_display(workflow_class=Workflow)
-    serialized_workflow: dict = workflow_display.serialize()
-
-    # THEN the node should properly serialize the function packages
-    my_tool_calling_node = next(
-        node
-        for node in serialized_workflow["workflow_raw_data"]["nodes"]
-        if node["id"] == str(MyToolCallingNode.__id__)
-    )
-
-    function_configs_attribute = next(
-        attribute for attribute in my_tool_calling_node["attributes"] if attribute["name"] == "function_configs"
-    )
-
-    assert function_configs_attribute == {
-        "id": "90cc5fc7-9fb3-450f-be5a-e90e7412a601",
-        "name": "function_configs",
-        "value": {
-            "type": "CONSTANT_VALUE",
-            "value": {
-                "type": "JSON",
-                "value": {
-                    "foo": {
-                        "runtime": "PYTHON_3_11_6",
-                        "packages": [
-                            {"version": "1.0.0", "name": "first_package"},
-                            {"version": "2.0.0", "name": "second_package"},
-                        ],
-                    },
-                    "bar": {"runtime": "PYTHON_3_11_6", "packages": [{"version": "3.0.0", "name": "third_package"}]},
-                },
-            },
-        },
-    }
-
-
-def test_serialize_node__function_configs__none():
-    # GIVEN a tool calling node with no function configs
-    def foo():
-        pass
-
-    class MyToolCallingNode(ToolCallingNode):
-        functions = [foo]
-
-    # AND a workflow with the tool calling node
-    class Workflow(BaseWorkflow):
-        graph = MyToolCallingNode
-
-    # WHEN the workflow is serialized
-    workflow_display = get_workflow_display(workflow_class=Workflow)
-    serialized_workflow: dict = workflow_display.serialize()
-
-    # THEN the node should properly serialize the functions
-    my_tool_calling_node = next(
-        node
-        for node in serialized_workflow["workflow_raw_data"]["nodes"]
-        if node["id"] == str(MyToolCallingNode.__id__)
-    )
-
-    function_configs_attribute = next(
-        attribute for attribute in my_tool_calling_node["attributes"] if attribute["name"] == "function_configs"
-    )
-
-    assert function_configs_attribute == {
-        "id": "5f63f2aa-72d7-47ad-a552-630753418b7d",
-        "name": "function_configs",
-        "value": {"type": "CONSTANT_VALUE", "value": {"type": "JSON", "value": None}},
     }

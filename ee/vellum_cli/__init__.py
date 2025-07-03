@@ -67,7 +67,7 @@ with the provided module or be available for use. The Workflow Sandbox must also
 @click.option("--deployment-label", type=str, help="Label to use for the Deployment")
 @click.option("--deployment-name", type=str, help="Unique name for the Deployment")
 @click.option("--deployment-description", type=str, help="Description for the Deployment")
-@click.option("--release-tag", type=list, help="Release Tag for the Deployment", multiple=True)
+@click.option("--release-tag", help="Release Tag for the Deployment", multiple=True)
 @click.option(
     "--dry-run",
     is_flag=True,
@@ -117,7 +117,7 @@ def workflows_push(
 @click.option("--deployment-label", type=str, help="Label to use for the Deployment")
 @click.option("--deployment-name", type=str, help="Unique name for the Deployment")
 @click.option("--deployment-description", type=str, help="Description for the Deployment")
-@click.option("--release-tag", type=list, help="Release Tag for the Deployment", multiple=True)
+@click.option("--release-tag", help="Release Tag for the Deployment", multiple=True)
 @click.option(
     "--dry-run",
     is_flag=True,
@@ -362,9 +362,12 @@ def images() -> None:
     "This field does not push multiple local tags of the passed in image.",
 )
 @click.option("--workspace", type=str, help="The specific Workspace config to use when pushing")
-def image_push(image: str, tag: Optional[List[str]] = None, workspace: Optional[str] = None) -> None:
+@click.option("--source", type=str, help="Path to Dockerfile to build before pushing")
+def image_push(
+    image: str, tag: Optional[List[str]] = None, workspace: Optional[str] = None, source: Optional[str] = None
+) -> None:
     """Push Docker image to Vellum"""
-    image_push_command(image, tag, workspace)
+    image_push_command(image, tag, workspace, source)
 
 
 @workflows.command(name="init")

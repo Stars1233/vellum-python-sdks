@@ -3,9 +3,25 @@ from copy import deepcopy
 from dataclasses import dataclass
 import logging
 from queue import Empty, Queue
+import sys
 from threading import Event as ThreadingEvent, Thread
+import traceback
 from uuid import UUID, uuid4
-from typing import TYPE_CHECKING, Any, Dict, Generic, Iterable, Iterator, Optional, Sequence, Set, Tuple, Type, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Generator,
+    Generic,
+    Iterable,
+    Iterator,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Type,
+    Union,
+)
 
 from vellum.workflows.constants import undefined
 from vellum.workflows.context import ExecutionContext, execution_context, get_execution_context
@@ -17,7 +33,7 @@ from vellum.workflows.events import (
     NodeExecutionRejectedEvent,
     NodeExecutionStreamingEvent,
     WorkflowEvent,
-    WorkflowEventStream,
+    WorkflowEventGenerator,
     WorkflowExecutionFulfilledEvent,
     WorkflowExecutionInitiatedEvent,
     WorkflowExecutionRejectedEvent,
@@ -31,6 +47,7 @@ from vellum.workflows.events.node import (
 )
 from vellum.workflows.events.types import BaseEvent, NodeParentContext, ParentContext, WorkflowParentContext
 from vellum.workflows.events.workflow import (
+    WorkflowEventStream,
     WorkflowExecutionFulfilledBody,
     WorkflowExecutionInitiatedBody,
     WorkflowExecutionPausedBody,
@@ -331,6 +348,7 @@ class WorkflowRunner(Generic[StateType]):
             )
         except NodeException as e:
             logger.info(e)
+
             self._workflow_event_inner_queue.put(
                 NodeExecutionRejectedEvent(
                     trace_id=execution.trace_id,
@@ -355,8 +373,15 @@ class WorkflowRunner(Generic[StateType]):
                     parent=execution.parent_context,
                 )
             )
+
         except Exception as e:
-            logger.exception(f"An unexpected error occurred while running node {node.__class__.__name__}")
+            error_message = self._parse_error_message(e)
+            if error_message is None:
+                logger.exception(f"An unexpected error occurred while running node {node.__class__.__name__}")
+                error_code = WorkflowErrorCode.INTERNAL_ERROR
+                error_message = "Internal error"
+            else:
+                error_code = WorkflowErrorCode.NODE_EXECUTION
 
             self._workflow_event_inner_queue.put(
                 NodeExecutionRejectedEvent(
@@ -365,8 +390,8 @@ class WorkflowRunner(Generic[StateType]):
                     body=NodeExecutionRejectedBody(
                         node_definition=node.__class__,
                         error=WorkflowError(
-                            message=str(e),
-                            code=WorkflowErrorCode.INTERNAL_ERROR,
+                            message=error_message,
+                            code=error_code,
                         ),
                     ),
                     parent=execution.parent_context,
@@ -374,6 +399,28 @@ class WorkflowRunner(Generic[StateType]):
             )
 
         logger.debug(f"Finished running node: {node.__class__.__name__}")
+
+    def _parse_error_message(self, exception: Exception) -> Optional[str]:
+        try:
+            _, _, tb = sys.exc_info()
+            if tb:
+                tb_list = traceback.extract_tb(tb)
+                if tb_list:
+                    last_frame = tb_list[-1]
+                    exception_module = next(
+                        (
+                            mod.__name__
+                            for mod in sys.modules.values()
+                            if hasattr(mod, "__file__") and mod.__file__ == last_frame.filename
+                        ),
+                        None,
+                    )
+                    if exception_module and not exception_module.startswith("vellum."):
+                        return str(exception)
+        except Exception:
+            pass
+
+        return None
 
     def _context_run_work_item(
         self,
@@ -730,7 +777,7 @@ class WorkflowRunner(Generic[StateType]):
             return event.workflow_definition == self.workflow.__class__
         return False
 
-    def stream(self) -> WorkflowEventStream:
+    def _generate_events(self) -> Generator[WorkflowEvent, None, None]:
         background_thread = Thread(
             target=self._run_background_thread,
             name=f"{self.workflow.__class__.__name__}.background_thread",
@@ -788,3 +835,6 @@ class WorkflowRunner(Generic[StateType]):
 
         self._background_thread_queue.put(None)
         cancel_thread_kill_switch.set()
+
+    def stream(self) -> WorkflowEventStream:
+        return WorkflowEventGenerator(self._generate_events(), self._initial_state.meta.span_id)

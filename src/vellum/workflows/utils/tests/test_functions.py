@@ -1,14 +1,21 @@
 from dataclasses import dataclass
+from unittest.mock import Mock
 from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
 from vellum.client.types.function_definition import FunctionDefinition
+from vellum.client.types.string_vellum_value import StringVellumValue
+from vellum.client.types.vellum_variable import VellumVariable
 from vellum.workflows import BaseWorkflow
 from vellum.workflows.inputs.base import BaseInputs
 from vellum.workflows.nodes.bases.base import BaseNode
 from vellum.workflows.state.base import BaseState
-from vellum.workflows.utils.functions import compile_function_definition, compile_workflow_function_definition
+from vellum.workflows.utils.functions import (
+    compile_function_definition,
+    compile_inline_workflow_function_definition,
+    compile_workflow_deployment_function_definition,
+)
 
 
 def test_compile_function_definition__just_name():
@@ -299,7 +306,7 @@ def test_compile_function_definition__lambda():
     )
 
 
-def test_compile_workflow_function_definition():
+def test_compile_inline_workflow_function_definition():
     class MyNode(BaseNode):
         pass
 
@@ -307,7 +314,7 @@ def test_compile_workflow_function_definition():
         graph = MyNode
 
     # WHEN compiling the function
-    compiled_function = compile_workflow_function_definition(MyWorkflow)
+    compiled_function = compile_inline_workflow_function_definition(MyWorkflow)
 
     # THEN it should return the compiled function definition
     assert compiled_function == FunctionDefinition(
@@ -316,7 +323,7 @@ def test_compile_workflow_function_definition():
     )
 
 
-def test_compile_workflow_function_definition__docstring():
+def test_compile_inline_workflow_function_definition__docstring():
     class MyNode(BaseNode):
         pass
 
@@ -328,7 +335,7 @@ def test_compile_workflow_function_definition__docstring():
         graph = MyNode
 
     # WHEN compiling the function
-    compiled_function = compile_workflow_function_definition(MyWorkflow)
+    compiled_function = compile_inline_workflow_function_definition(MyWorkflow)
 
     # THEN it should return the compiled function definition
     assert compiled_function == FunctionDefinition(
@@ -338,7 +345,7 @@ def test_compile_workflow_function_definition__docstring():
     )
 
 
-def test_compile_workflow_function_definition__all_args():
+def test_compile_inline_workflow_function_definition__all_args():
     class MyInputs(BaseInputs):
         a: str
         b: int
@@ -354,7 +361,7 @@ def test_compile_workflow_function_definition__all_args():
         graph = MyNode
 
     # WHEN compiling the workflow
-    compiled_function = compile_workflow_function_definition(MyWorkflow)
+    compiled_function = compile_inline_workflow_function_definition(MyWorkflow)
 
     # THEN it should return the compiled function definition
     assert compiled_function == FunctionDefinition(
@@ -374,7 +381,7 @@ def test_compile_workflow_function_definition__all_args():
     )
 
 
-def test_compile_workflow_function_definition__unions():
+def test_compile_inline_workflow_function_definition__unions():
     # GIVEN a workflow with a union
     class MyInputs(BaseInputs):
         a: Union[str, int]
@@ -386,7 +393,7 @@ def test_compile_workflow_function_definition__unions():
         graph = MyNode
 
     # WHEN compiling the workflow
-    compiled_function = compile_workflow_function_definition(MyWorkflow)
+    compiled_function = compile_inline_workflow_function_definition(MyWorkflow)
 
     # THEN it should return the compiled function definition
     assert compiled_function == FunctionDefinition(
@@ -399,7 +406,7 @@ def test_compile_workflow_function_definition__unions():
     )
 
 
-def test_compile_workflow_function_definition__optionals():
+def test_compile_inline_workflow_function_definition__optionals():
     class MyInputs(BaseInputs):
         a: str
         b: Optional[str]
@@ -414,7 +421,7 @@ def test_compile_workflow_function_definition__optionals():
         graph = MyNode
 
     # WHEN compiling the workflow
-    compiled_function = compile_workflow_function_definition(MyWorkflow)
+    compiled_function = compile_inline_workflow_function_definition(MyWorkflow)
 
     # THEN it should return the compiled function definition
     assert compiled_function == FunctionDefinition(
@@ -429,5 +436,148 @@ def test_compile_workflow_function_definition__optionals():
                 "e": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
             },
             "required": ["a", "b", "c"],
+        },
+    )
+
+
+def test_compile_workflow_deployment_function_definition__just_name():
+    # GIVEN a mock Vellum client and deployment
+    mock_client = Mock()
+    mock_release = Mock()
+    mock_release.workflow_version.input_variables = []
+    mock_release.description = "This is a test deployment"
+    mock_client.release_reviews.retrieve_workflow_deployment_release.return_value = mock_release
+
+    deployment_config = {"deployment": "my_deployment", "release_tag": "latest"}
+
+    # WHEN compiling the deployment workflow function
+    compiled_function = compile_workflow_deployment_function_definition(deployment_config, mock_client)
+
+    # THEN it should return the compiled function definition (same structure as function test)
+    assert compiled_function == FunctionDefinition(
+        name="my_deployment",
+        description="This is a test deployment",
+        parameters={"type": "object", "properties": {}, "required": []},
+    )
+
+
+def test_compile_workflow_deployment_function_definition__all_args():
+    # GIVEN a mock Vellum client and deployment
+    mock_client = Mock()
+    mock_release = Mock()
+
+    mock_inputs = []
+    for key, vellum_type in [
+        ("a", "STRING"),
+        ("b", "NUMBER"),
+        ("c", "JSON"),
+        ("d", "CHAT_HISTORY"),
+        ("e", "SEARCH_RESULTS"),
+        ("f", "ERROR"),
+        ("g", "ARRAY"),
+        ("h", "FUNCTION_CALL"),
+        ("i", "IMAGE"),
+        ("j", "AUDIO"),
+        ("k", "DOCUMENT"),
+        ("l", "NULL"),
+    ]:
+        mock_input = VellumVariable(
+            id=f"input_{key}",
+            key=key,
+            type=vellum_type,
+            required=True,
+            default=None,
+        )
+        mock_inputs.append(mock_input)
+
+    mock_release.workflow_version.input_variables = mock_inputs
+    mock_release.description = "This is a test deployment"
+    mock_client.release_reviews.retrieve_workflow_deployment_release.return_value = mock_release
+
+    deployment_config = {"deployment": "my_deployment", "release_tag": "latest"}
+
+    # WHEN compiling the deployment workflow function
+    compiled_function = compile_workflow_deployment_function_definition(deployment_config, mock_client)
+
+    # THEN it should return the compiled function definition
+    assert compiled_function == FunctionDefinition(
+        name="my_deployment",
+        description="This is a test deployment",
+        parameters={
+            "type": "object",
+            "properties": {
+                "a": {"type": "string"},
+                "b": {"type": "number"},
+                "c": {"type": "object"},
+                "d": {"type": "array"},
+                "e": {"type": "array"},
+                "f": {"type": "object"},
+                "g": {"type": "array"},
+                "h": {"type": "object"},
+                "i": {"type": "object"},
+                "j": {"type": "object"},
+                "k": {"type": "object"},
+                "l": {"type": "null"},
+            },
+            "required": ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"],
+        },
+    )
+
+
+def test_compile_workflow_deployment_function_definition__defaults():
+    # GIVEN a mock Vellum client and deployment
+    mock_client = Mock()
+    mock_release = Mock()
+
+    mock_inputs = []
+
+    mock_input_no_default = VellumVariable(
+        id="no_default",
+        key="no_default",
+        type="STRING",
+        required=True,
+        default=None,
+    )
+    mock_inputs.append(mock_input_no_default)
+
+    mock_input_null_default = VellumVariable(
+        id="null_default",
+        key="null_default",
+        type="STRING",
+        required=False,
+        default=StringVellumValue(value=None),
+    )
+    mock_inputs.append(mock_input_null_default)
+
+    mock_input_actual_default = VellumVariable(
+        id="actual_default",
+        key="actual_default",
+        type="STRING",
+        required=False,
+        default=StringVellumValue(value="hello world"),
+    )
+    mock_inputs.append(mock_input_actual_default)
+
+    mock_release.workflow_version.input_variables = mock_inputs
+    mock_release.description = "This is a test deployment"
+    mock_client.release_reviews.retrieve_workflow_deployment_release.return_value = mock_release
+
+    deployment_config = {"deployment": "my_deployment", "release_tag": "latest"}
+
+    # WHEN compiling the deployment workflow function
+    compiled_function = compile_workflow_deployment_function_definition(deployment_config, mock_client)
+
+    # THEN it should return the compiled function definition with proper default handling
+    assert compiled_function == FunctionDefinition(
+        name="my_deployment",
+        description="This is a test deployment",
+        parameters={
+            "type": "object",
+            "properties": {
+                "no_default": {"type": "string"},
+                "null_default": {"type": "string", "default": None},
+                "actual_default": {"type": "string", "default": "hello world"},
+            },
+            "required": ["no_default"],
         },
     )

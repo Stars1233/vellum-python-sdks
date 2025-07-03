@@ -5,15 +5,25 @@ exports[`GenericNode > basic > getNodeDisplayFile 1`] = `
 
 from vellum_ee.workflows.display.editor import NodeDisplayData, NodeDisplayPosition
 from vellum_ee.workflows.display.nodes import BaseNodeDisplay
-from vellum_ee.workflows.display.nodes.types import PortDisplayOverrides
+from vellum_ee.workflows.display.nodes.types import (
+    NodeOutputDisplay,
+    PortDisplayOverrides,
+)
 
 from ...nodes.my_custom_node import MyCustomNode
 
 
 class MyCustomNodeDisplay(BaseNodeDisplay[MyCustomNode]):
+    label = "MyCustomNode"
+    node_id = UUID("9dc95b5d-1467-4b17-abb0-449d1aac6aec")
     attribute_ids_by_name = {
         "default-attribute": UUID("990d55db-9d72-452a-b074-9bee1f89ecb9"),
         "default-attribute-2": UUID("70652383-d93f-4c3a-b194-1ea5cdced8f1"),
+    }
+    output_display = {
+        MyCustomNode.Outputs.output: NodeOutputDisplay(
+            id=UUID("output-1"), name="output"
+        )
     }
     port_displays = {
         MyCustomNode.Ports.default_port: PortDisplayOverrides(
@@ -66,7 +76,10 @@ from vellum_ee.workflows.display.nodes import (
     BaseRetryNodeDisplay,
     BaseTryNodeDisplay,
 )
-from vellum_ee.workflows.display.nodes.types import PortDisplayOverrides
+from vellum_ee.workflows.display.nodes.types import (
+    NodeOutputDisplay,
+    PortDisplayOverrides,
+)
 
 from ...nodes.my_custom_node import MyCustomNode
 
@@ -75,9 +88,16 @@ from ...nodes.my_custom_node import MyCustomNode
 @BaseMapNodeDisplay.wrap(node_id=UUID("adornment-2"))
 @BaseRetryNodeDisplay.wrap(node_id=UUID("adornment-3"))
 class MyCustomNodeDisplay(BaseNodeDisplay[MyCustomNode]):
+    label = "MyCustomNode"
+    node_id = UUID("75ce71d3-d50b-4c8f-9b38-eee8c8362a92")
     attribute_ids_by_name = {
         "default-attribute": UUID("990d55db-9d72-452a-b074-9bee1f89ecb9"),
         "default-attribute-2": UUID("70652383-d93f-4c3a-b194-1ea5cdced8f1"),
+    }
+    output_display = {
+        MyCustomNode.Outputs.output: NodeOutputDisplay(
+            id=UUID("output-1"), name="output"
+        )
     }
     port_displays = {
         MyCustomNode.Ports.default_port: PortDisplayOverrides(
@@ -160,6 +180,22 @@ class MyCustomNode(BaseNode):
 "
 `;
 
+exports[`GenericNode > basic with environment variable reference as attribute > getNodeFile 1`] = `
+"from vellum.workflows.nodes import BaseNode
+from vellum.workflows.references import EnvironmentVariableReference
+
+
+class TestEnvironmentVariableNode(BaseNode):
+    api_key_attribute = EnvironmentVariableReference(name="API_KEY")
+
+    class NodeTrigger(BaseNode.Trigger):
+        merge_behavior = "AWAIT_ALL"
+
+    class Outputs(BaseNode.Outputs):
+        output = "default-value"
+"
+`;
+
 exports[`GenericNode > basic with generic node output as attribute > getNodeFile 1`] = `
 "from vellum.workflows.nodes import BaseNode
 
@@ -177,18 +213,76 @@ class MyCustomNode(BaseNode):
 "
 `;
 
+exports[`GenericNode > basic with invalid blank unary expression > should handle null LHS in blank expression gracefully 1`] = `
+"from vellum.workflows.nodes import BaseNode
+from vellum.workflows.references.constant import ConstantValueReference
+
+
+class TestBlankNode(BaseNode):
+    blank_attribute = ConstantValueReference(None).is_blank()
+
+    class NodeTrigger(BaseNode.Trigger):
+        merge_behavior = "AWAIT_ALL"
+
+    class Outputs(BaseNode.Outputs):
+        output = "default-value"
+"
+`;
+
+exports[`GenericNode > basic with invalid coalesce binary expression > should handle null LHS in coalesce expression gracefully 1`] = `
+"from vellum.workflows.nodes import BaseNode
+from vellum.workflows.references.constant import ConstantValueReference
+
+
+class TestCoalesceNode(BaseNode):
+    coalesce_attribute = ConstantValueReference(None).coalesce("fallback_value")
+
+    class NodeTrigger(BaseNode.Trigger):
+        merge_behavior = "AWAIT_ALL"
+
+    class Outputs(BaseNode.Outputs):
+        output = "default-value"
+"
+`;
+
+exports[`GenericNode > basic with invalid notBlank unary expression > should handle null LHS in notBlank expression gracefully 1`] = `
+"from vellum.workflows.nodes import BaseNode
+from vellum.workflows.references.constant import ConstantValueReference
+
+
+class TestNotBlankNode(BaseNode):
+    not_blank_attribute = ConstantValueReference(None).is_not_blank()
+
+    class NodeTrigger(BaseNode.Trigger):
+        merge_behavior = "AWAIT_ALL"
+
+    class Outputs(BaseNode.Outputs):
+        output = "default-value"
+"
+`;
+
 exports[`GenericNode > basic with node output as attribute > getNodeDisplayFile 1`] = `
 "from uuid import UUID
 
 from vellum_ee.workflows.display.editor import NodeDisplayData, NodeDisplayPosition
 from vellum_ee.workflows.display.nodes import BaseNodeDisplay
-from vellum_ee.workflows.display.nodes.types import PortDisplayOverrides
+from vellum_ee.workflows.display.nodes.types import (
+    NodeOutputDisplay,
+    PortDisplayOverrides,
+)
 
 from ...nodes.my_custom_node import MyCustomNode
 
 
 class MyCustomNodeDisplay(BaseNodeDisplay[MyCustomNode]):
+    label = "MyCustomNode"
+    node_id = UUID("bed8d22e-4835-41d9-ad81-e78a4b0e7ae0")
     attribute_ids_by_name = {"default-attribute": UUID("attr-1-id")}
+    output_display = {
+        MyCustomNode.Outputs.output: NodeOutputDisplay(
+            id=UUID("output-1"), name="output"
+        )
+    }
     port_displays = {
         MyCustomNode.Ports.default_port: PortDisplayOverrides(
             id=UUID("2544f9e4-d6e6-4475-b6a9-13393115d77c")

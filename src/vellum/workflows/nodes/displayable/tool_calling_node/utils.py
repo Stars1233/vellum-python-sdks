@@ -1,14 +1,9 @@
-from collections.abc import Callable, Sequence
-import inspect
 import json
-import types
 from typing import Any, Iterator, List, Optional, Type, cast
 
 from pydash import snake_case
 
 from vellum import ChatMessage, PromptBlock
-from vellum.client.types.code_execution_package import CodeExecutionPackage
-from vellum.client.types.code_execution_runtime import CodeExecutionRuntime
 from vellum.client.types.function_call_chat_message_content import FunctionCallChatMessageContent
 from vellum.client.types.function_call_chat_message_content_value import FunctionCallChatMessageContentValue
 from vellum.client.types.string_chat_message_content import StringChatMessageContent
@@ -16,14 +11,15 @@ from vellum.client.types.variable_prompt_block import VariablePromptBlock
 from vellum.workflows.errors.types import WorkflowErrorCode
 from vellum.workflows.exceptions import NodeException
 from vellum.workflows.nodes.bases import BaseNode
-from vellum.workflows.nodes.displayable.code_execution_node.node import CodeExecutionNode
 from vellum.workflows.nodes.displayable.inline_prompt_node.node import InlinePromptNode
+from vellum.workflows.nodes.displayable.subworkflow_deployment_node.node import SubworkflowDeploymentNode
 from vellum.workflows.outputs.base import BaseOutput
 from vellum.workflows.ports.port import Port
 from vellum.workflows.references.lazy import LazyReference
-from vellum.workflows.state.base import BaseState
+from vellum.workflows.state.context import WorkflowContext
 from vellum.workflows.state.encoder import DefaultStateEncoder
-from vellum.workflows.types.core import EntityInputsInterface, MergeBehavior
+from vellum.workflows.types.core import EntityInputsInterface, MergeBehavior, Tool
+from vellum.workflows.types.definition import DeploymentDefinition
 from vellum.workflows.types.generics import is_workflow_class
 
 
@@ -34,10 +30,16 @@ class FunctionNode(BaseNode):
 
 
 class ToolRouterNode(InlinePromptNode):
+    max_prompt_iterations: Optional[int] = 5
+
     class Trigger(InlinePromptNode.Trigger):
         merge_behavior = MergeBehavior.AWAIT_ATTRIBUTES
 
     def run(self) -> Iterator[BaseOutput]:
+        if self.state.prompt_iterations >= self.max_prompt_iterations:
+            max_iterations_message = f"Maximum number of prompt iterations `{self.max_prompt_iterations}` reached."
+            raise NodeException(message=max_iterations_message, code=WorkflowErrorCode.NODE_EXECUTION)
+
         self.prompt_inputs = {**self.prompt_inputs, "chat_history": self.state.chat_history}  # type: ignore
         generator = super().run()
         for output in generator:
@@ -47,6 +49,8 @@ class ToolRouterNode(InlinePromptNode):
                     if values[0].type == "STRING":
                         self.state.chat_history.append(ChatMessage(role="ASSISTANT", text=values[0].value))
                     elif values[0].type == "FUNCTION_CALL":
+                        self.state.prompt_iterations += 1
+
                         function_call = values[0].value
                         if function_call is not None:
                             self.state.chat_history.append(
@@ -67,14 +71,15 @@ class ToolRouterNode(InlinePromptNode):
 def create_tool_router_node(
     ml_model: str,
     blocks: List[PromptBlock],
-    functions: List[Callable[..., Any]],
+    functions: List[Tool],
     prompt_inputs: Optional[EntityInputsInterface],
+    max_prompt_iterations: Optional[int] = None,
 ) -> Type[ToolRouterNode]:
     if functions and len(functions) > 0:
         # If we have functions, create dynamic ports for each function
         Ports = type("Ports", (), {})
         for function in functions:
-            function_name = snake_case(function.__name__)
+            function_name = get_function_name(function)
 
             # Avoid using lambda to capture function_name
             # lambda will capture the function_name by reference,
@@ -117,6 +122,7 @@ def create_tool_router_node(
                 "blocks": blocks,
                 "functions": functions,
                 "prompt_inputs": prompt_inputs,
+                "max_prompt_iterations": max_prompt_iterations,
                 "Ports": Ports,
                 "__module__": __name__,
             },
@@ -126,25 +132,74 @@ def create_tool_router_node(
 
 
 def create_function_node(
-    function: Callable[..., Any],
+    function: Tool,
     tool_router_node: Type[ToolRouterNode],
-    packages: Optional[Sequence[CodeExecutionPackage]] = None,
-    runtime: CodeExecutionRuntime = "PYTHON_3_11_6",
 ) -> Type[FunctionNode]:
     """
     Create a FunctionNode class for a given function.
 
     For workflow functions: BaseNode
-    For regular functions: CodeExecutionNode with embedded function
+    For regular functions: BaseNode with direct function call
+
     Args:
         function: The function to create a node for
         tool_router_node: The tool router node class
-        packages: Optional list of packages to install for code execution (only used for regular functions)
-        runtime: The runtime to use for code execution (default: "PYTHON_3_11_6")
     """
-    if is_workflow_class(function):
+    if isinstance(function, DeploymentDefinition):
+        deployment = function.deployment_id or function.deployment_name
+        release_tag = function.release_tag
+
+        def execute_workflow_deployment_function(self) -> BaseNode.Outputs:
+            function_call_output = self.state.meta.node_outputs.get(tool_router_node.Outputs.results)
+            if function_call_output and len(function_call_output) > 0:
+                function_call = function_call_output[0]
+                arguments = function_call.value.arguments
+            else:
+                arguments = {}
+
+            subworkflow_node = type(
+                f"DynamicSubworkflowNode_{deployment}",
+                (SubworkflowDeploymentNode,),
+                {
+                    "deployment": deployment,
+                    "release_tag": release_tag,
+                    "subworkflow_inputs": arguments,
+                    "__module__": __name__,
+                },
+            )
+
+            node_instance = subworkflow_node(
+                context=WorkflowContext.create_from(self._context),
+                state=self.state,
+            )
+
+            outputs = {}
+            for output in node_instance.run():
+                outputs[output.name] = output.value
+
+            self.state.chat_history.append(
+                ChatMessage(
+                    role="FUNCTION",
+                    content=StringChatMessageContent(value=json.dumps(outputs, cls=DefaultStateEncoder)),
+                )
+            )
+
+            return self.Outputs()
+
+        node = type(
+            f"WorkflowDeploymentNode_{deployment}",
+            (FunctionNode,),
+            {
+                "run": execute_workflow_deployment_function,
+                "__module__": __name__,
+            },
+        )
+
+        return node
+
+    elif is_workflow_class(function):
         # Create a class-level wrapper that calls the original function
-        def execute_function(self) -> BaseNode.Outputs:
+        def execute_inline_workflow_function(self) -> BaseNode.Outputs:
             outputs = self.state.meta.node_outputs.get(tool_router_node.Outputs.text)
 
             outputs = json.loads(outputs)
@@ -152,8 +207,7 @@ def create_function_node(
 
             # Call the function based on its type
             inputs_instance = function.get_inputs_class()(**arguments)
-
-            workflow = function()
+            workflow = function(context=WorkflowContext.create_from(self._context))
             terminal_event = workflow.run(
                 inputs=inputs_instance,
             )
@@ -165,7 +219,7 @@ def create_function_node(
             elif terminal_event.name == "workflow.execution.fulfilled":
                 result = terminal_event.outputs
             elif terminal_event.name == "workflow.execution.rejected":
-                raise Exception(f"Workflow execution rejected: {terminal_event.error}")
+                raise NodeException(message=terminal_event.error.message, code=terminal_event.error.code)
 
             self.state.chat_history.append(
                 ChatMessage(
@@ -181,24 +235,13 @@ def create_function_node(
             f"InlineWorkflowNode_{function.__name__}",
             (FunctionNode,),
             {
-                "run": execute_function,
+                "run": execute_inline_workflow_function,
                 "__module__": __name__,
             },
         )
     else:
-        # For regular functions, use CodeExecutionNode approach
-        function_source = inspect.getsource(function)
-        function_name = function.__name__
-
-        code = f'''
-{function_source}
-
-def main(arguments):
-    """Main function that calls the original function with the provided arguments."""
-    return {function_name}(**arguments)
-'''
-
-        def execute_code_execution_function(self) -> BaseNode.Outputs:
+        # For regular functions, call them directly
+        def execute_regular_function(self) -> BaseNode.Outputs:
             # Get the function call from the tool router output
             function_call_output = self.state.meta.node_outputs.get(tool_router_node.Outputs.results)
             if function_call_output and len(function_call_output) > 0:
@@ -207,42 +250,41 @@ def main(arguments):
             else:
                 arguments = {}
 
-            self.code_inputs = {"arguments": arguments}
+            # Call the function directly
+            try:
+                result = function(**arguments)
+            except Exception as e:
+                raise NodeException(
+                    message=f"Error executing function '{function.__name__}': {str(e)}",
+                    code=WorkflowErrorCode.NODE_EXECUTION,
+                )
 
-            outputs = base_class.run(self)
-
+            # Add the result to the chat history
             self.state.chat_history.append(
                 ChatMessage(
                     role="FUNCTION",
-                    content=StringChatMessageContent(value=json.dumps(outputs.result, cls=DefaultStateEncoder)),
+                    content=StringChatMessageContent(value=json.dumps(result, cls=DefaultStateEncoder)),
                 )
             )
 
             return self.Outputs()
 
-        # Create the properly typed base class with explicit type annotation
-        def get_function_output_type() -> Type:
-            return function.__annotations__.get("return", Any)
-
-        output_type = get_function_output_type()
-
-        base_class: Type[CodeExecutionNode] = CodeExecutionNode[BaseState, output_type]  # type: ignore[valid-type]
-
-        # Create the class with basic attributes
-        node = types.new_class(
-            f"CodeExecutionNode_{function.__name__}",
-            (base_class,),
-            {},
-            lambda ns: ns.update(
-                {
-                    "code": code,
-                    "code_inputs": {},  # No inputs needed since we handle function call extraction in run()
-                    "run": execute_code_execution_function,
-                    "runtime": runtime,
-                    "packages": packages,
-                    "__module__": __name__,
-                }
-            ),
+        # Create BaseNode for regular functions
+        node = type(
+            f"FunctionNode_{function.__name__}",
+            (FunctionNode,),
+            {
+                "run": execute_regular_function,
+                "__module__": __name__,
+            },
         )
 
     return node
+
+
+def get_function_name(function: Tool) -> str:
+    if isinstance(function, DeploymentDefinition):
+        name = str(function.deployment_id or function.deployment_name)
+        return name.replace("-", "")
+    else:
+        return snake_case(function.__name__)

@@ -36,11 +36,14 @@ export function convertOperatorType(
     notIn: "not_in",
     between: "between",
     notBetween: "not_between",
+    blank: "is_blank",
+    notBlank: "is_not_blank",
     parseJson: "parse_json",
     coalesce: "coalesce",
     accessField: "access_field",
     or: "or",
     and: "and",
+    isError: "is_error",
   };
 
   return operatorMappings[operator] || "equals"; // return default operator if not found
@@ -65,6 +68,7 @@ export function isReference(
     workflowValueDescriptor.type === "WORKFLOW_STATE" ||
     workflowValueDescriptor.type === "CONSTANT_VALUE" ||
     workflowValueDescriptor.type === "VELLUM_SECRET" ||
+    workflowValueDescriptor.type === "ENVIRONMENT_VARIABLE" ||
     workflowValueDescriptor.type === "EXECUTION_COUNTER" ||
     workflowValueDescriptor.type === "DICTIONARY_REFERENCE" ||
     workflowValueDescriptor.type === "ARRAY_REFERENCE"

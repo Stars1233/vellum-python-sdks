@@ -53,6 +53,7 @@ import {
   DictionaryWorkflowReferenceEntry,
   ElifConditionNodePort,
   ElseConditionNodePort,
+  EnvironmentVariableWorkflowReference,
   EntrypointNode,
   ErrorNode,
   ExecutionCounterPointer,
@@ -117,7 +118,6 @@ import {
   WorkflowSandboxRoutingConfig,
   WorkflowStateVariableWorkflowReference,
   WorkflowValueDescriptor,
-  WorkflowVersionExecConfig,
   WorkspaceSecretPointer,
 } from "src/types/vellum";
 
@@ -764,6 +764,19 @@ export declare namespace VellumSecretWorkflowReferenceSerializer {
   }
 }
 
+export const EnvironmentVariableWorkflowReferenceSerializer: ObjectSchema<
+  EnvironmentVariableWorkflowReferenceSerializer.Raw,
+  Omit<EnvironmentVariableWorkflowReference, "type">
+> = objectSchema({
+  environmentVariable: propertySchema("environment_variable", stringSchema()),
+});
+
+export declare namespace EnvironmentVariableWorkflowReferenceSerializer {
+  interface Raw {
+    environment_variable: string;
+  }
+}
+
 export const ExecutionCounterWorkflowReferenceSerializer: ObjectSchema<
   ExecutionCounterWorkflowReferenceSerializer.Raw,
   Omit<ExecutionCounterWorkflowReference, "type">
@@ -781,12 +794,14 @@ export const DictionaryWorkflowReferenceEntrySerializer: ObjectSchema<
   DictionaryWorkflowReferenceEntrySerializer.Raw,
   Omit<DictionaryWorkflowReferenceEntry, "type">
 > = objectSchema({
+  id: stringSchema().optional(),
   key: stringSchema(),
   value: lazySchema(() => WorkflowValueDescriptorSerializer).nullable(),
 });
 
 export declare namespace DictionaryWorkflowReferenceEntrySerializer {
   interface Raw {
+    id?: string | null;
     key: string;
     value: WorkflowValueDescriptorSerializer.Raw | null;
   }
@@ -830,6 +845,7 @@ export const WorkflowValueDescriptorSerializer: Schema<
   WORKFLOW_STATE: WorkflowStateVariableWorkflowReferenceSerializer,
   CONSTANT_VALUE: ConstantValueWorkflowReferenceSerializer,
   VELLUM_SECRET: VellumSecretWorkflowReferenceSerializer,
+  ENVIRONMENT_VARIABLE: EnvironmentVariableWorkflowReferenceSerializer,
   EXECUTION_COUNTER: ExecutionCounterWorkflowReferenceSerializer,
   DICTIONARY_REFERENCE: DictionaryWorkflowReferenceSerializer,
   ARRAY_REFERENCE: ArrayWorkflowReferenceSerializer,
@@ -845,6 +861,7 @@ export declare namespace WorkflowValueDescriptorSerializer {
     | WorkflowStateVariableWorkflowReferenceSerializer.Raw
     | ConstantValueWorkflowReferenceSerializer.Raw
     | VellumSecretWorkflowReferenceSerializer.Raw
+    | EnvironmentVariableWorkflowReferenceSerializer.Raw
     | ExecutionCounterWorkflowReferenceSerializer.Raw
     | DictionaryWorkflowReferenceSerializer.Raw
     | ArrayWorkflowReferenceSerializer.Raw;
@@ -1488,12 +1505,14 @@ export const CodeExecutionPackageSerializer: ObjectSchema<
 > = objectSchema({
   version: stringSchema(),
   name: stringSchema(),
+  repository: stringSchema().optional().nullable(),
 });
 
 export declare namespace CodeExecutionPackageSerializer {
   interface Raw {
     version: string;
     name: string;
+    repository?: string | null;
   }
 }
 
@@ -2185,10 +2204,20 @@ export declare namespace WorkflowRawDataSerializer {
   }
 }
 
-export const WorkflowVersionExecConfigSerializer: ObjectSchema<
-  WorkflowVersionExecConfigSerializer.Raw,
-  WorkflowVersionExecConfig
-> = objectSchema({
+export const ModuleDataSerializer = objectSchema({
+  additionalFiles: propertySchema(
+    "additional_files",
+    recordSchema(stringSchema(), stringSchema()).optional()
+  ),
+});
+
+export declare namespace ModuleDataSerializer {
+  interface Raw {
+    additional_files?: Record<string, string>;
+  }
+}
+
+export const WorkflowVersionExecConfigSerializer = objectSchema({
   workflowRawData: propertySchema(
     "workflow_raw_data",
     WorkflowRawDataSerializer
@@ -2218,6 +2247,7 @@ export const WorkflowVersionExecConfigSerializer: ObjectSchema<
       ),
     }).optional()
   ),
+  moduleData: propertySchema("module_data", ModuleDataSerializer.optional()),
 });
 
 export declare namespace WorkflowVersionExecConfigSerializer {
@@ -2230,6 +2260,7 @@ export declare namespace WorkflowVersionExecConfigSerializer {
       container_image_name?: string | null;
       container_image_tag?: string | null;
     } | null;
+    module_data?: ModuleDataSerializer.Raw | null;
   }
 }
 

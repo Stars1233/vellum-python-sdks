@@ -30,6 +30,13 @@ export function getGeneratedNodesModulePath(
   workflowContext: WorkflowContext
 ): string[] {
   if (workflowContext.parentNode) {
+    if (workflowContext.nestedWorkflowModuleName) {
+      return [
+        ...workflowContext.parentNode.getNodeModulePath(),
+        workflowContext.nestedWorkflowModuleName,
+        GENERATED_NODES_MODULE_NAME,
+      ];
+    }
     return [
       ...workflowContext.parentNode.getNodeModulePath(),
       GENERATED_NODES_MODULE_NAME,
@@ -59,16 +66,34 @@ export function getGeneratedNodeModuleInfo({
 
   // In the case of adorned Nodes, we need to traverse the Adornment Node's definition to get
   // info about the inner Node that it adorns.
-  // TODO: Handle case where there's multiple adornments on the same Node
-  //  https://app.shortcut.com/vellum/story/5699
   if (modulePathLeaf && modulePathLeaf === "<adornment>") {
+    let baseModuleIndex = -1;
+    let baseClassIndex = -1;
+
+    let firstAdornmentIndex = -1;
+    for (let i = 0; i < nodeDefinition.module.length; i++) {
+      if (nodeDefinition.module[i] === "<adornment>") {
+        firstAdornmentIndex = i;
+        break;
+      }
+    }
+
+    if (firstAdornmentIndex >= 2) {
+      baseClassIndex = firstAdornmentIndex - 1;
+      baseModuleIndex = firstAdornmentIndex - 2;
+    }
+
     rawModuleName =
-      nodeDefinition?.module?.[nodeDefinition.module.length - 3] ??
-      toPythonSafeSnakeCase(nodeLabel, "node");
+      baseModuleIndex >= 0 && nodeDefinition.module[baseModuleIndex]
+        ? nodeDefinition.module[baseModuleIndex] ||
+          toPythonSafeSnakeCase(nodeLabel, "node")
+        : toPythonSafeSnakeCase(nodeLabel, "node");
 
     nodeClassName =
-      nodeDefinition?.module?.[nodeDefinition.module.length - 2] ??
-      workflowContext.getUniqueClassName(nodeLabel);
+      baseClassIndex >= 0 && nodeDefinition.module[baseClassIndex]
+        ? nodeDefinition.module[baseClassIndex] ||
+          workflowContext.getUniqueClassName(nodeLabel)
+        : workflowContext.getUniqueClassName(nodeLabel);
   } else {
     rawModuleName = modulePathLeaf ?? toPythonSafeSnakeCase(nodeLabel, "node");
 
@@ -96,6 +121,14 @@ export function getGeneratedNodeDisplayModulePath(
   moduleName: string
 ): string[] {
   if (workflowContext.parentNode) {
+    if (workflowContext.nestedWorkflowModuleName) {
+      return [
+        ...workflowContext.parentNode.getNodeDisplayModulePath(),
+        workflowContext.nestedWorkflowModuleName,
+        GENERATED_NODES_MODULE_NAME,
+        moduleName,
+      ];
+    }
     return [
       ...workflowContext.parentNode.getNodeDisplayModulePath(),
       GENERATED_NODES_MODULE_NAME,

@@ -1,5 +1,6 @@
-import { mkdir } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
+import * as path from "path";
 
 import { python } from "@fern-api/python-ast";
 import { Comment } from "@fern-api/python-ast/Comment";
@@ -178,6 +179,15 @@ ${errors.slice(0, 3).map((err) => {
   }
 
   public async generateCode(): Promise<void> {
+    const absolutePathToModuleDirectory = join(
+      this.workflowContext.absolutePathToOutputDirectory,
+      ...this.getModulePath()
+    );
+
+    await mkdir(absolutePathToModuleDirectory, {
+      recursive: true,
+    });
+
     const assets = await this.generateAssets().catch((error) => {
       if (error instanceof BaseCodegenError) {
         this.workflowContext.addError(error);
@@ -203,15 +213,6 @@ ${errors.slice(0, 3).map((err) => {
       workflowContext: this.workflowContext,
     });
 
-    const absolutePathToModuleDirectory = join(
-      this.workflowContext.absolutePathToOutputDirectory,
-      ...this.getModulePath()
-    );
-
-    await mkdir(absolutePathToModuleDirectory, {
-      recursive: true,
-    });
-
     await Promise.all([
       // __init__.py
       this.generateRootInitFile().persist(),
@@ -229,6 +230,7 @@ ${errors.slice(0, 3).map((err) => {
       ...this.generateNodeFiles(nodes),
       // sandbox.py
       ...(this.sandboxInputs ? [this.generateSandboxFile().persist()] : []),
+      this.writeAdditionalFiles(),
     ]);
 
     // error.log - this gets generated separately from the other files because it
@@ -243,7 +245,19 @@ ${errors.slice(0, 3).map((err) => {
 
     const parentNode = this.workflowContext.parentNode;
     if (parentNode) {
-      statements.push(parentNode.generateNodeClass());
+      if (this.workflowContext.nestedWorkflowModuleName) {
+        comments.push(python.comment({ docs: "flake8: noqa: F401, F403" }));
+        imports.push(
+          python.starImport({
+            modulePath: [
+              ...parentNode.getNodeDisplayModulePath().slice(0, 1),
+              GENERATED_DISPLAY_MODULE_NAME,
+            ],
+          })
+        );
+      } else {
+        statements.push(parentNode.generateNodeClass());
+      }
     } else {
       comments.push(python.comment({ docs: "flake8: noqa: F401, F403" }));
       imports.push(
@@ -271,16 +285,24 @@ ${errors.slice(0, 3).map((err) => {
 
     const parentNode = this.workflowContext.parentNode;
     if (parentNode) {
+      let parentModulePath: string[] = [];
+      if (this.workflowContext.nestedWorkflowModuleName) {
+        parentModulePath = [
+          ...parentNode.getNodeDisplayModulePath().slice(0, 1),
+        ];
+      } else {
+        parentModulePath = [...parentNode.getNodeDisplayModulePath()];
+      }
       statements.push(...parentNode.generateNodeDisplayClasses());
       comments.push(python.comment({ docs: "flake8: noqa: F401, F403" }));
       imports.push(
         python.starImport({
-          modulePath: [...parentNode.getNodeDisplayModulePath(), "nodes"],
+          modulePath: [...parentModulePath, "nodes"],
         })
       );
       imports.push(
         python.starImport({
-          modulePath: [...parentNode.getNodeDisplayModulePath(), "workflow"],
+          modulePath: [...parentModulePath, "workflow"],
         })
       );
     } else {
@@ -781,6 +803,28 @@ ${errors.slice(0, 3).map((err) => {
    * Gets the node file paths that have been tracked during code generation that will be merged by codegen-service
    * @returns Set of node file paths
    */
+  private async writeAdditionalFiles(): Promise<void> {
+    const moduleData = this.workflowVersionExecConfig.moduleData;
+    if (!moduleData?.additionalFiles) {
+      return;
+    }
+
+    const absolutePathToModuleDirectory = join(
+      this.workflowContext.absolutePathToOutputDirectory,
+      ...this.getModulePath()
+    );
+
+    await Promise.all(
+      Object.entries(moduleData.additionalFiles).map(
+        async ([relativePath, content]) => {
+          const fullPath = join(absolutePathToModuleDirectory, relativePath);
+          await mkdir(path.dirname(fullPath), { recursive: true });
+          await writeFile(fullPath, content);
+        }
+      )
+    );
+  }
+
   public getPythonCodeMergeableNodeFiles(): Set<string> {
     return this.workflowContext.getPythonCodeMergeableNodeFiles();
   }

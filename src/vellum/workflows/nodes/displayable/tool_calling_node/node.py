@@ -1,23 +1,21 @@
-from collections.abc import Callable, Sequence
-from typing import Any, ClassVar, Dict, List, Optional, cast
-
-from pydash import snake_case
+from typing import ClassVar, List, Optional
 
 from vellum import ChatMessage, PromptBlock
-from vellum.client.types.code_execution_package import CodeExecutionPackage
-from vellum.client.types.code_execution_runtime import CodeExecutionRuntime
 from vellum.workflows.context import execution_context, get_parent_context
 from vellum.workflows.errors.types import WorkflowErrorCode
 from vellum.workflows.exceptions import NodeException
 from vellum.workflows.graph.graph import Graph
 from vellum.workflows.inputs.base import BaseInputs
 from vellum.workflows.nodes.bases import BaseNode
-from vellum.workflows.nodes.experimental.tool_calling_node.utils import create_function_node, create_tool_router_node
+from vellum.workflows.nodes.displayable.tool_calling_node.utils import (
+    create_function_node,
+    create_tool_router_node,
+    get_function_name,
+)
 from vellum.workflows.outputs.base import BaseOutputs
 from vellum.workflows.state.base import BaseState
 from vellum.workflows.state.context import WorkflowContext
-from vellum.workflows.types.core import EntityInputsInterface
-from vellum.workflows.workflows.base import BaseWorkflow
+from vellum.workflows.types.core import EntityInputsInterface, Tool
 
 
 class ToolCallingNode(BaseNode):
@@ -27,17 +25,16 @@ class ToolCallingNode(BaseNode):
     Attributes:
         ml_model: str - The model to use for tool calling (e.g., "gpt-4o-mini")
         blocks: List[PromptBlock] - The prompt blocks to use (same format as InlinePromptNode)
-        functions: List[FunctionDefinition] - The functions that can be called
-        function_callables: List[Callable] - The callables that can be called
+        functions: List[Tool] - The functions that can be called
         prompt_inputs: Optional[EntityInputsInterface] - Mapping of input variable names to values
-        function_configs: Optional[Dict[str, Dict[str, Any]]] - Mapping of function names to their configuration
+        max_prompt_iterations: Optional[int] - Maximum number of prompt iterations before stopping
     """
 
     ml_model: ClassVar[str] = "gpt-4o-mini"
     blocks: ClassVar[List[PromptBlock]] = []
-    functions: ClassVar[List[Callable[..., Any]]] = []
+    functions: ClassVar[List[Tool]] = []
     prompt_inputs: ClassVar[Optional[EntityInputsInterface]] = None
-    function_configs: ClassVar[Optional[Dict[str, Dict[str, Any]]]] = None
+    max_prompt_iterations: ClassVar[Optional[int]] = 5
 
     class Outputs(BaseOutputs):
         """
@@ -64,6 +61,9 @@ class ToolCallingNode(BaseNode):
 
             class ToolCallingState(BaseState):
                 chat_history: List[ChatMessage] = []
+                prompt_iterations: int = 0
+
+            from vellum.workflows.workflows.base import BaseWorkflow
 
             class ToolCallingWorkflow(BaseWorkflow[BaseInputs, ToolCallingState]):
                 graph = self._graph
@@ -92,7 +92,7 @@ class ToolCallingNode(BaseNode):
 
                 return node_outputs
             elif terminal_event.name == "workflow.execution.rejected":
-                raise Exception(f"Workflow execution rejected: {terminal_event.error}")
+                raise NodeException(message=terminal_event.error.message, code=terminal_event.error.code)
 
             raise Exception(f"Unexpected workflow event: {terminal_event.name}")
 
@@ -102,29 +102,16 @@ class ToolCallingNode(BaseNode):
             blocks=self.blocks,
             functions=self.functions,
             prompt_inputs=self.prompt_inputs,
+            max_prompt_iterations=self.max_prompt_iterations,
         )
 
         self._function_nodes = {}
         for function in self.functions:
-            function_name = snake_case(function.__name__)
-
-            # Get configuration for this function
-            config = {}
-            if self.function_configs and function.__name__ in self.function_configs:
-                config = self.function_configs[function.__name__]
-
-            packages = config.get("packages", None)
-            if packages is not None:
-                packages = cast(Sequence[CodeExecutionPackage], packages)
-
-            runtime_raw = config.get("runtime", "PYTHON_3_11_6")
-            runtime = cast(CodeExecutionRuntime, runtime_raw)
+            function_name = get_function_name(function)
 
             self._function_nodes[function_name] = create_function_node(
                 function=function,
                 tool_router_node=self.tool_router_node,
-                packages=packages,
-                runtime=runtime,
             )
 
         graph_set = set()

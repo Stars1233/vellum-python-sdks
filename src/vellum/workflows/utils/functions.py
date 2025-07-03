@@ -1,12 +1,14 @@
 import dataclasses
 import inspect
-from typing import TYPE_CHECKING, Any, Callable, Optional, Type, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Type, Union, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 from pydash import snake_case
 
+from vellum import Vellum
 from vellum.client.types.function_definition import FunctionDefinition
+from vellum.workflows.utils.vellum_variables import vellum_variable_type_to_openapi_type
 
 if TYPE_CHECKING:
     from vellum.workflows.workflows.base import BaseWorkflow
@@ -24,27 +26,27 @@ type_map = {
 }
 
 
-def _compile_annotation(annotation: Optional[Any], defs: dict[str, Any]) -> dict:
+def compile_annotation(annotation: Optional[Any], defs: dict[str, Any]) -> dict:
     if annotation is None:
         return {"type": "null"}
 
     if get_origin(annotation) is Union:
-        return {"anyOf": [_compile_annotation(a, defs) for a in get_args(annotation)]}
+        return {"anyOf": [compile_annotation(a, defs) for a in get_args(annotation)]}
 
     if get_origin(annotation) is dict:
         _, value_type = get_args(annotation)
-        return {"type": "object", "additionalProperties": _compile_annotation(value_type, defs)}
+        return {"type": "object", "additionalProperties": compile_annotation(value_type, defs)}
 
     if get_origin(annotation) is list:
         item_type = get_args(annotation)[0]
-        return {"type": "array", "items": _compile_annotation(item_type, defs)}
+        return {"type": "array", "items": compile_annotation(item_type, defs)}
 
     if dataclasses.is_dataclass(annotation):
         if annotation.__name__ not in defs:
             properties = {}
             required = []
             for field in dataclasses.fields(annotation):
-                properties[field.name] = _compile_annotation(field.type, defs)
+                properties[field.name] = compile_annotation(field.type, defs)
                 if field.default is dataclasses.MISSING:
                     required.append(field.name)
                 else:
@@ -59,7 +61,7 @@ def _compile_annotation(annotation: Optional[Any], defs: dict[str, Any]) -> dict
             for field_name, field in annotation.model_fields.items():
                 # Mypy is incorrect here, the `annotation` attribute is defined on `FieldInfo`
                 field_annotation = field.annotation  # type: ignore[attr-defined]
-                properties[field_name] = _compile_annotation(field_annotation, defs)
+                properties[field_name] = compile_annotation(field_annotation, defs)
                 if field.default is PydanticUndefined:
                     required.append(field_name)
                 else:
@@ -86,6 +88,19 @@ def _compile_default_value(default: Any) -> Any:
     return default
 
 
+def _compile_workflow_deployment_input(input_var: Any) -> dict[str, Any]:
+    """
+    Converts a deployment workflow input variable to a JSON schema type definition.
+    """
+    primitive_type = vellum_variable_type_to_openapi_type(input_var.type)
+    input_schema = {"type": primitive_type}
+
+    if input_var.default is not None:
+        input_schema["default"] = input_var.default.value
+
+    return input_schema
+
+
 def compile_function_definition(function: Callable) -> FunctionDefinition:
     """
     Converts a Python function into our Vellum-native FunctionDefinition type.
@@ -100,7 +115,7 @@ def compile_function_definition(function: Callable) -> FunctionDefinition:
     required = []
     defs: dict[str, Any] = {}
     for param in signature.parameters.values():
-        properties[param.name] = _compile_annotation(param.annotation, defs)
+        properties[param.name] = compile_annotation(param.annotation, defs)
         if param.default is inspect.Parameter.empty:
             required.append(param.name)
         else:
@@ -117,7 +132,7 @@ def compile_function_definition(function: Callable) -> FunctionDefinition:
     )
 
 
-def compile_workflow_function_definition(workflow_class: Type["BaseWorkflow"]) -> FunctionDefinition:
+def compile_inline_workflow_function_definition(workflow_class: Type["BaseWorkflow"]) -> FunctionDefinition:
     """
     Converts a base workflow class into our Vellum-native FunctionDefinition type.
     """
@@ -133,7 +148,7 @@ def compile_workflow_function_definition(workflow_class: Type["BaseWorkflow"]) -
         if name.startswith("__"):
             continue
 
-        properties[name] = _compile_annotation(field_type, defs)
+        properties[name] = compile_annotation(field_type, defs)
 
         # Check if the field has a default value
         if name not in vars_inputs_class:
@@ -149,5 +164,44 @@ def compile_workflow_function_definition(workflow_class: Type["BaseWorkflow"]) -
     return FunctionDefinition(
         name=snake_case(workflow_class.__name__),
         description=workflow_class.__doc__,
+        parameters=parameters,
+    )
+
+
+def compile_workflow_deployment_function_definition(
+    deployment_config: Dict[str, str],
+    vellum_client: Vellum,
+) -> FunctionDefinition:
+    """
+    Converts a deployment workflow config into our Vellum-native FunctionDefinition type.
+
+    Args:
+        deployment_config: Dict with 'deployment' and 'release_tag' keys
+        vellum_client: Vellum client instance
+    """
+    deployment = deployment_config["deployment"]
+    release_tag = deployment_config["release_tag"]
+
+    workflow_deployment_release = vellum_client.release_reviews.retrieve_workflow_deployment_release(
+        deployment, release_tag
+    )
+
+    input_variables = workflow_deployment_release.workflow_version.input_variables
+    description = workflow_deployment_release.description
+
+    properties = {}
+    required = []
+
+    for input_var in input_variables:
+        properties[input_var.key] = _compile_workflow_deployment_input(input_var)
+
+        if input_var.required and input_var.default is None:
+            required.append(input_var.key)
+
+    parameters = {"type": "object", "properties": properties, "required": required}
+
+    return FunctionDefinition(
+        name=deployment.replace("-", ""),
+        description=description,
         parameters=parameters,
     )
