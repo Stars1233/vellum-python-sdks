@@ -255,15 +255,19 @@ export class GenericNode extends BaseNode<GenericNodeType, GenericNodeContext> {
                   const arguments_: python.MethodArgument[] = [
                     python.methodArgument({
                       name: "name",
-                      value: python.TypeInstantiation.str(
-                        mcpServerFunction.name
-                      ),
+                      value: new WorkflowValueDescriptor({
+                        workflowValueDescriptor: mcpServerFunction.name,
+                        nodeContext: this.nodeContext,
+                        workflowContext: this.workflowContext,
+                      }),
                     }),
                     python.methodArgument({
                       name: "url",
-                      value: python.TypeInstantiation.str(
-                        mcpServerFunction.url
-                      ),
+                      value: new WorkflowValueDescriptor({
+                        workflowValueDescriptor: mcpServerFunction.url,
+                        nodeContext: this.nodeContext,
+                        workflowContext: this.workflowContext,
+                      }),
                     }),
                     python.methodArgument({
                       name: "authorization_type",
@@ -279,7 +283,10 @@ export class GenericNode extends BaseNode<GenericNodeType, GenericNodeContext> {
                     }),
                   ];
 
-                  if (mcpServerFunction.bearer_token_value) {
+                  if (
+                    mcpServerFunction.bearer_token_value?.type ===
+                    "ENVIRONMENT_VARIABLE"
+                  ) {
                     arguments_.push(
                       python.methodArgument({
                         name: "bearer_token_value",
@@ -293,7 +300,13 @@ export class GenericNode extends BaseNode<GenericNodeType, GenericNodeContext> {
                     );
                   }
 
-                  if (mcpServerFunction.api_key_header_key) {
+                  if (
+                    mcpServerFunction.api_key_header_key?.type ===
+                      "CONSTANT_VALUE" &&
+                    mcpServerFunction.api_key_header_key.value?.type ===
+                      "STRING" &&
+                    mcpServerFunction.api_key_header_key.value.value
+                  ) {
                     arguments_.push(
                       python.methodArgument({
                         name: "api_key_header_key",
@@ -307,7 +320,10 @@ export class GenericNode extends BaseNode<GenericNodeType, GenericNodeContext> {
                     );
                   }
 
-                  if (mcpServerFunction.api_key_header_value) {
+                  if (
+                    mcpServerFunction.api_key_header_value?.type ===
+                    "ENVIRONMENT_VARIABLE"
+                  ) {
                     arguments_.push(
                       python.methodArgument({
                         name: "api_key_header_value",

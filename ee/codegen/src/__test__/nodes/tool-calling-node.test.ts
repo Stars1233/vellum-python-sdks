@@ -537,12 +537,38 @@ describe("ToolCallingNode", () => {
   describe("mcp server", () => {
     const mcpServerFunction: MCPServerFunctionArgs = {
       type: "MCP_SERVER",
-      name: "github",
-      url: "https://api.githubcopilot.com/mcp/",
+      name: {
+        type: "CONSTANT_VALUE",
+        value: {
+          type: "STRING",
+          value: "github",
+        },
+      },
+      url: {
+        type: "CONSTANT_VALUE",
+        value: {
+          type: "STRING",
+          value: "https://api.githubcopilot.com/mcp/",
+        },
+      },
       authorization_type: "BEARER_TOKEN",
       bearer_token_value: {
         type: "ENVIRONMENT_VARIABLE",
         environmentVariable: "GITHUB_PERSONAL_ACCESS_TOKEN",
+      },
+      api_key_header_key: {
+        type: "CONSTANT_VALUE",
+        value: {
+          type: "JSON",
+          value: null,
+        },
+      },
+      api_key_header_value: {
+        type: "CONSTANT_VALUE",
+        value: {
+          type: "JSON",
+          value: null,
+        },
       },
     };
 
